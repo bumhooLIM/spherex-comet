@@ -82,7 +82,7 @@ class QueryConfig:
 
     interval_days: float = 5.0
     rh_max: float = 10.0
-    vmag_max: float = 21.0
+    vmag_max: float = 19.0
     is_cutout: bool = True
     cutout_size: str = "10arcmin"
     intersect: str = "overlaps"
