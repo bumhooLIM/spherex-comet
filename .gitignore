@@ -36,3 +36,6 @@ fig/*
 # Editor
 .vscode/
 .idea/
+
+# pytest
+.pytest_cache/
