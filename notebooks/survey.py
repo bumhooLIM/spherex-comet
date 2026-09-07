@@ -110,7 +110,9 @@ def load_status(root):
     if not path.exists():
         return {}
     try:
-        df = pd.read_csv(path)
+        # "2024E1" parses as the float 20240.0 unless the column is pinned to
+        # str -- which silently breaks resume for any \d{4}E\d designation.
+        df = pd.read_csv(path, dtype={"target": str, "designation": str})
         return {str(r["target"]): dict(r) for _, r in df.iterrows()}
     except Exception:                                           # noqa: BLE001
         log.warning("Could not read %s; starting a fresh status table", path)
@@ -257,7 +259,7 @@ def process(designation, args, root, prior=None):
     elif "figures" in args.steps or "profile" in args.steps:
         path = zc.result_dir(target.name, create=False) / f"photometry_{zc.target_slug(target.name)}.csv"
         if path.exists():
-            table = pd.read_csv(path)
+            table = pd.read_csv(path, dtype={"target": str})
 
     elements = None
     if table is not None and not table.empty and ("profile" in args.steps or "figures" in args.steps):

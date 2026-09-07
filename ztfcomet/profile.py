@@ -43,9 +43,30 @@ from scipy import ndimage
 from . import config as cfg
 
 __all__ = [
-    "DEFAULT_RADII", "radial_profile", "select_field_stars", "stack_star_profiles",
-    "fit_powerlaw", "profile_frame", "run_profiles", "ProfileConfig",
+    "DEFAULT_RADII", "KM_PER_ARCSEC_AU", "radial_profile", "select_field_stars",
+    "stack_star_profiles", "fit_powerlaw", "profile_frame", "run_profiles",
+    "ProfileConfig", "physical_scales", "fit_coma_model", "psf_kernel_from_stack",
 ]
+
+#: Kilometres subtended by one arcsecond at one au.
+KM_PER_ARCSEC_AU = 1.495978707e8 * np.deg2rad(1.0 / 3600.0)
+
+
+def physical_scales(frame, fit_rmin_pix=None, rmax_pix=10.0):
+    """Pixel-to-kilometre scales for a frame (row with ``pixscale``, ``delta``, ``fwhm_pix``).
+
+    Returns a dict: ``km_per_pix``, ``fwhm_km``, ``rho_fit_rmin_km`` (inner fit
+    limit), ``rho_rmax_km`` (outer annulus), and ``n_pix_per_1e4km``.  These are
+    what decide whether a 10 px profile is probing 4 000 km of coma or 15 000.
+    """
+    pixscale = float(frame.get("pixscale", np.nan))
+    delta = float(frame.get("delta", np.nan))
+    fwhm = float(frame.get("fwhm_pix", np.nan))
+    km_per_pix = pixscale * delta * KM_PER_ARCSEC_AU
+    rmin = float(fit_rmin_pix) if fit_rmin_pix is not None else np.nan
+    return dict(km_per_pix=km_per_pix, fwhm_km=fwhm * km_per_pix,
+                rho_fit_rmin_km=rmin * km_per_pix, rho_rmax_km=rmax_pix * km_per_pix,
+                n_pix_per_1e4km=1.0e4 / km_per_pix if km_per_pix > 0 else np.nan)
 
 log = logging.getLogger(__name__)
 
@@ -59,7 +80,8 @@ class ProfileConfig:
     def __init__(self, radii=None, half_width=0.25, oversample=4, sigma=3.0,
                  maxiters=5, max_stars=20, snr_min=10.0, saturation_fraction=0.8,
                  detect_sigma=5.0, exclude_comet_pix=30.0, min_pixels=3,
-                 fit_rmin_fwhm=1.5, fit_rmax_pix=10.0, star_isolation_pix=None):
+                 fit_rmin_fwhm=1.5, fit_rmax_pix=10.0, star_isolation_pix=None,
+                 oversample_stars=True):
         self.radii = np.asarray(DEFAULT_RADII if radii is None else radii, float)
         self.half_width = float(half_width)
         self.oversample = int(oversample)
@@ -73,6 +95,9 @@ class ProfileConfig:
         self.min_pixels = int(min_pixels)
         self.fit_rmin_fwhm = float(fit_rmin_fwhm)
         self.fit_rmax_pix = float(fit_rmax_pix)
+        # Profile the field stars on the same oversampled grid as the comet, so
+        # the two are strictly like-for-like. Off, stars use native pixels.
+        self.oversample_stars = bool(oversample_stars)
         # Another source inside this radius disqualifies a star; default is the
         # outer annulus edge plus a margin, so the profile is never blended.
         self.star_isolation_pix = (float(star_isolation_pix) if star_isolation_pix
@@ -285,7 +310,7 @@ def select_field_stars(data, gain, readnoise, saturate, exclude_xy=None,
     return stars.reset_index(drop=True), bkg
 
 
-def stack_star_profiles(sub, stars, profile_config=None):
+def stack_star_profiles(sub, stars, profile_config=None, oversample=1):
     """Normalised, sigma-clipped-median radial profile of the field stars.
 
     Each star is profiled at native resolution on the background-subtracted
@@ -303,7 +328,7 @@ def stack_star_profiles(sub, stars, profile_config=None):
     profiles, rows = [], []
     for i, s in stars.iterrows():
         prof = radial_profile(sub, s["x"], s["y"], pc.radii, pc.half_width, sky=0.0,
-                              oversample=1, sigma=pc.sigma, maxiters=pc.maxiters,
+                              oversample=oversample, sigma=pc.sigma, maxiters=pc.maxiters,
                               min_pixels=pc.min_pixels)
         c0 = central_sb(prof)
         if not np.isfinite(c0) or c0 <= 0:
@@ -354,7 +379,8 @@ def profile_frame(path, x, y, sky, gain, readnoise, saturate, fwhm_pix,
     stars, bkg = select_field_stars(data, gain, readnoise, saturate, exclude_xy=(x, y),
                                     profile_config=pc)
     sub = np.ascontiguousarray(np.where(np.isfinite(data), data, 0.0), np.float32) - bkg
-    stack, per_star = stack_star_profiles(sub, stars, pc)
+    stack, per_star = stack_star_profiles(
+        sub, stars, pc, oversample=pc.oversample if pc.oversample_stars else 1)
 
     sky_level = float(sky) if np.isfinite(sky) else float(bkg.globalback)
     comet = radial_profile(data, x, y, pc.radii, pc.half_width, sky=sky_level,
@@ -391,6 +417,181 @@ def profile_frame(path, x, y, sky, gain, readnoise, saturate, fwhm_pix,
         excess_at_3fwhm=float(comet["excess"].iloc[idx]),
     )
     return comet, stack, per_star, summary
+
+
+# ------------------------------------------------------- PSF-convolved model
+def _annulus_means(grid, rr, valid, radii, half_width):
+    """Plain annulus means on a grid whose sample radii are already known."""
+    out = np.full(len(radii), np.nan)
+    for i, r in enumerate(radii):
+        sel = valid & (np.abs(rr - r) < half_width)
+        if sel.any():
+            out[i] = grid[sel].mean()
+    return out
+
+
+def psf_kernel_from_stack(stack, oversample=4, half_size=14.0, slope_fallback=-4.0):
+    """Azimuthally symmetric PSF on an oversampled grid, from the star stack.
+
+    The stacked star profile *is* the PSF measurement for the frame, so use it
+    directly rather than assume a Gaussian or Moffat.  Beyond the last measured
+    radius the kernel is extrapolated with the star profile's own power law.
+
+    Returns
+    -------
+    kernel : ndarray
+        Normalised so that ``kernel.sum() == 1`` (unit total flux).
+    """
+    r_k = stack["r_pix"].to_numpy(float)
+    k = stack["median"].to_numpy(float)
+    good = np.isfinite(k) & (k > 0)
+    r_k, k = r_k[good], k[good]
+    if r_k.size < 4:
+        raise ValueError("star stack too sparse for a kernel")
+    slope, intercept, _ = fit_powerlaw(r_k, k, max(r_k.min(), 3.0), r_k.max())
+    if not np.isfinite(slope):
+        slope, intercept = slope_fallback, np.log10(k[-1]) - slope_fallback * np.log10(r_k[-1])
+
+    n = int(2 * half_size * oversample) + 1
+    c = (n - 1) / 2.0
+    yy, xx = np.mgrid[0:n, 0:n]
+    rr = np.hypot(xx - c, yy - c) / oversample
+    kern = np.interp(rr, r_k, k, left=k[0])
+    tail = rr > r_k.max()
+    kern[tail] = 10 ** (intercept + slope * np.log10(rr[tail]))
+    return kern / kern.sum()
+
+
+def fit_coma_model(comet, stack, oversample=4, half_size=14.0, radii=None,
+                   half_width=0.25, fit_rmax=10.0, m_fixed=None, soft_pix=0.25,
+                   fit_sky=False):
+    """Forward-model the comet profile as nucleus + PSF-convolved power-law coma.
+
+    A power law fitted *outside* the PSF core is biased wherever the core is a
+    large fraction of the usable range -- which is exactly the situation at
+    large observer distance, where 10 px is many thousands of km and the fit
+    window shrinks toward the PSF.  Modelling the PSF explicitly removes that
+    bias: the intrinsic profile is
+
+    .. math:: I(\\rho) = F_n\\,\\delta(\\rho) + C\\,\\rho^{-m}
+
+    convolved with the empirical PSF from the field-star stack, then averaged
+    in the same annuli as the data.  ``m`` is the corrected coma slope, and
+    ``F_n`` the nucleus (point-source) flux.
+
+    Parameters
+    ----------
+    comet : pandas.DataFrame
+        From :func:`radial_profile` (oversampled), sky-subtracted DN/px.
+    stack : pandas.DataFrame
+        Normalised star stack from :func:`stack_star_profiles`.
+    m_fixed : float, optional
+        Fix the coma slope (e.g. 1.0 for a steady-state test) and fit only the
+        two amplitudes; the returned chi-square can be compared with the free fit.
+    fit_sky : bool
+        Add a free constant ``s`` to the model.  On a faint comet the outer
+        annuli sit within a few sigma of the sky level, so an error of a few DN
+        in the sky estimate steepens (or flattens) the whole outer profile; a
+        free offset absorbs it, and the inner annuli -- far above the sky --
+        still pin the slope.
+
+    Returns
+    -------
+    dict
+        ``m``, ``F_nuc``, ``C``, ``sky_offset``, ``nucleus_fraction`` (of model
+        flux inside ``fit_rmax``), ``chi2_red``, ``n_points``, ``model`` (model
+        annulus means), ``success``.
+    """
+    from scipy.optimize import least_squares
+
+    radii = np.asarray(DEFAULT_RADII if radii is None else radii, float)
+    obs = comet["mean_clip"].to_numpy(float)
+    err = (comet["std_clip"].to_numpy(float) / np.sqrt(np.maximum(comet["n_clip"].to_numpy(float), 1)))
+    keep = np.isfinite(obs) & np.isfinite(err) & (radii <= fit_rmax)
+    if keep.sum() < 5:
+        return dict(m=np.nan, F_nuc=np.nan, C=np.nan, sky_offset=np.nan, nucleus_fraction=np.nan,
+                    chi2_red=np.nan, n_points=int(keep.sum()), model=None, success=False)
+    err = np.where(err > 0, err, np.nanmedian(err[err > 0]) if np.any(err > 0) else 1.0)
+    err = np.maximum(err, 0.01 * np.abs(obs) + 1e-3)
+
+    kernel = psf_kernel_from_stack(stack, oversample, half_size)
+    n = kernel.shape[0]
+    c = (n - 1) / 2.0
+    yy, xx = np.mgrid[0:n, 0:n]
+    rr = np.hypot(xx - c, yy - c) / oversample          # px
+    valid = np.ones_like(rr, bool)
+    rho = np.maximum(rr, soft_pix)
+
+    from scipy.signal import fftconvolve
+
+    # Nucleus: a point source of unit flux, in DN/px on the sub-pixel grid.
+    # A unit-flux kernel already IS the PSF image of one unit of flux spread
+    # over sub-pixels; per original pixel the SB is os^2 times that.
+    nuc_sb = kernel * oversample ** 2
+    # Coma: SB map (DN/px) convolved with the unit-flux kernel.
+    def coma_sb(m):
+        return fftconvolve(rho ** (-m), kernel, mode="same")
+
+    ann_nuc = _annulus_means(nuc_sb, rr, valid, radii, half_width)
+
+    # No caching keyed on m: least_squares probes derivatives with ~1e-8 steps,
+    # and a rounded cache key returned the same profile for every probe -- a
+    # zero gradient, so the slope never moved from its starting value.
+    def model_profile(F, C, m, s=0.0):
+        return F * ann_nuc + C * _annulus_means(coma_sb(m), rr, valid, radii, half_width) + s
+
+    # Starting values: coma amplitude from r ~ 5 px, nucleus from the excess
+    # of the innermost point over the coma there.
+    i5 = int(np.argmin(np.abs(radii - 5.0)))
+    m0 = 1.0 if m_fixed is None else float(m_fixed)
+    prof_c0 = _annulus_means(coma_sb(m0), rr, valid, radii, half_width)
+    C0 = max(obs[i5] / prof_c0[i5], 1e-6) if np.isfinite(obs[i5]) and prof_c0[i5] > 0 else 1.0
+    F0 = max((obs[keep][0] - C0 * prof_c0[keep][0]) / max(ann_nuc[keep][0], 1e-9), 0.0)
+
+    # Sky offset bounded to a few times the outermost observed SB: enough to
+    # absorb a mis-estimated sky, not enough to swallow the coma.
+    s_bound = 3.0 * float(np.nanmax(np.abs(obs[keep][-3:]))) + 1e-3
+    x0, lo, hi, scale = [np.log10(F0 + 1e-3), np.log10(C0)], [-6, -6], [8, 8], [1.0, 1.0]
+    if m_fixed is None:
+        x0.append(m0); lo.append(0.0); hi.append(3.0); scale.append(0.3)
+    if fit_sky:
+        x0.append(0.0); lo.append(-s_bound); hi.append(s_bound); scale.append(max(s_bound / 3, 1e-3))
+
+    def unpack(pv):
+        F, C = 10 ** pv[0], 10 ** pv[1]
+        i = 2
+        m = m0
+        if m_fixed is None:
+            m = pv[i]; i += 1
+        s = pv[i] if fit_sky else 0.0
+        return F, C, m, s
+
+    def resid(pv):
+        F, C, m, s = unpack(pv)
+        return (model_profile(F, C, m, s)[keep] - obs[keep]) / err[keep]
+
+    try:
+        sol = least_squares(resid, x0, bounds=(lo, hi), max_nfev=400,
+                            diff_step=1e-4, x_scale=scale)
+    except Exception as exc:                                    # noqa: BLE001
+        log.debug("coma model fit failed: %s", exc)
+        return dict(m=np.nan, F_nuc=np.nan, C=np.nan, sky_offset=np.nan, nucleus_fraction=np.nan,
+                    chi2_red=np.nan, n_points=int(keep.sum()), model=None, success=False)
+
+    F, C, m, s = unpack(sol.x)
+    m = float(m)
+    model = model_profile(F, C, m, s)
+    dof = max(int(keep.sum()) - len(sol.x), 1)
+    chi2 = float(np.sum(sol.fun ** 2))
+
+    # Flux fractions inside fit_rmax, from the model components.
+    inside = rr <= fit_rmax
+    f_nuc = F * nuc_sb[inside].sum() / oversample ** 2
+    f_com = C * coma_sb(m)[inside].sum() / oversample ** 2
+    return dict(m=m, F_nuc=float(F), C=float(C), sky_offset=float(s),
+                nucleus_fraction=float(f_nuc / (f_nuc + f_com)) if (f_nuc + f_com) > 0 else np.nan,
+                chi2_red=chi2 / dof, n_points=int(keep.sum()), model=model,
+                success=bool(sol.success))
 
 
 # --------------------------------------------------------------------- driver
@@ -456,9 +657,10 @@ def run_profiles(target, table, datadir, profile_config=None, progress=True,
             continue
 
         base = {"target": target.name, "file": row["file"], **{c: row[c] for c in carry}}
+        scales = physical_scales(row, fit_rmin_pix=summ["fit_rmin_pix"], rmax_pix=pc.rmax)
         for _, pr in comet.iterrows():
-            long_rows.append({**base, **pr.to_dict()})
-        sum_rows.append({**base, **summ})
+            long_rows.append({**base, **pr.to_dict(), "rho_km": pr["r_pix"] * scales["km_per_pix"]})
+        sum_rows.append({**base, **summ, **scales})
         if not per_star.empty:
             per_star = per_star.assign(file=row["file"])
             star_rows.append(per_star)
@@ -505,7 +707,8 @@ def _plot_frame(comet, stack, summ, meta, outpath, dpi=60):
     ax.plot(r, comet["mean_clip_native_norm"], "--", color="tab:blue", lw=1.2, label="comet, native pixels")
     if stack["n_stars"].max() > 0:
         m, s = stack["median"].to_numpy(), stack["std"].to_numpy()
-        ax.plot(r, m, "s-", color="tab:red", ms=4, label=f"field stars, median (N={int(stack['n_stars'].max())})")
+        ax.plot(r, m, "s-", color="tab:red", ms=4,
+                label=f"field stars, median (N={int(stack['n_stars'].max())}, same grid)")
         ax.fill_between(r, np.clip(m - s, 1e-4, None), m + s, color="tab:red", alpha=0.15, lw=0)
     # 1/rho reference anchored on the comet at the inner fit radius.
     rmin = summ.get("fit_rmin_pix", 2.0)
