@@ -72,6 +72,9 @@ _RECORD_RE = re.compile(
 #: matched against major bodies and satellites first: "2P" returns Styx (905).
 SMALLBODY = "smallbody"
 
+#: Horizons clips the targetname field at this width.
+_TARGETNAME_MAXLEN = 31
+
 #: designation -> resolved record, so a multi-chunk run resolves once.
 _CACHE: dict[tuple[str, int | None, bool], "HorizonsRecord"] = {}
 
@@ -316,25 +319,42 @@ def verify_targetname(targetname, expected, allow_fragment=False):
     Parameters
     ----------
     targetname : str
-        The ``targetname`` column from a Horizons result, e.g. ``"240P/NEAT"``.
+        The ``targetname`` column from a Horizons result, e.g. ``"240P/NEAT"``
+        or ``"Tsuchinshan-ATLAS (C/2023 A3)"``.
     expected : str
         The designation that was requested, e.g. ``"240P"``.
 
     Returns
     -------
     (ok, message) : tuple of bool and str
-        ``ok`` is False when the result is a fragment (and fragments were not
-        requested) or plainly a different object.
+
+    Notes
+    -----
+    Horizons truncates this field at 31 characters, so a long name arrives
+    clipped: ``"Bernardinelli-Bernstein (C/2014"`` has lost the ``UN271)`` that
+    identifies it.  A clipped name is matched as a **prefix** rather than
+    rejected -- otherwise perfectly good long-named comets fail verification.
+    Fragment names (``240P-B/NEAT``) are far shorter than the limit, so the
+    fragment check is unaffected by this leniency.
     """
     got = str(targetname).strip()
     want = str(expected).strip()
     if not got or not want:
         return True, ""
 
-    # "240P/NEAT" or "240P-B/NEAT" -> designation part
-    got_desig = got.split("(")[0].split("/")[0].strip() if "/" in got else got
-    if got.startswith("C/") or got.startswith("P/") or got.startswith("X/"):
+    def norm(text):
+        return re.sub(r"[^A-Z0-9]", "", str(text).upper())
+
+    # Designation inside parentheses, e.g. "ATLAS (C/2023 A3)".
+    inside = re.search(r"\(([^)]*)\)?$", got)
+    if inside and re.match(r"^[CPXDAI]?/?\s*\d", inside.group(1).strip()):
+        got_desig = inside.group(1).strip()
+    elif "/" in got and not got.split("/")[0].strip().isalpha():
+        got_desig = got.split("(")[0].split("/")[0].strip()
+    elif got[:2].upper() in ("C/", "P/", "X/", "D/", "I/"):
         got_desig = got.split("(")[0].strip()
+    else:
+        got_desig = got.split("(")[0].split("/")[0].strip()
 
     got_parent, got_frag = split_designation(got_desig)
     want_parent, want_frag = split_designation(want)
@@ -343,14 +363,31 @@ def verify_targetname(targetname, expected, allow_fragment=False):
         return False, (f"Horizons returned fragment {got_desig!r} for {want!r}; "
                        f"pass allow_fragment=True if that is intended")
 
-    def norm(text):
-        return re.sub(r"[^A-Z0-9]", "", str(text).upper())
+    want_norm, got_norm = norm(want_parent), norm(got)
+    if not want_norm or not got_norm:
+        return True, ""
 
-    if want_parent and norm(want_parent) and norm(got_parent):
-        if norm(want_parent) not in norm(got) and norm(got_parent) not in norm(want_parent):
-            return False, (f"Horizons returned {got!r} for {want!r} — "
-                           f"a stale or wrong record number?")
-    return True, ""
+    if want_norm in got_norm or norm(got_parent) in want_norm:
+        return True, ""
+
+    # Truncated at the service's 31-character limit: match what survived as a
+    # prefix of what we asked for. "C/2014" is a prefix of "C/2014 UN271".
+    truncated = len(got) >= _TARGETNAME_MAXLEN or (got.count("(") > got.count(")"))
+    if truncated:
+        # Strip the orbit-class prefix: Horizons says "C/2014" where the
+        # request said "2014 UN271", so compare the designation bodies.
+        visible = norm(re.sub(r"^[CPXDAI]/", "", got_desig.strip()))
+        bare_want = norm(re.sub(r"^[CPXDAI]/", "", want_parent.strip()))
+        if visible and (bare_want.startswith(visible) or visible.endswith(bare_want)
+                        or visible in bare_want):
+            return True, ""
+        if not re.search(r"\d", got_desig):
+            log.warning("Horizons name %r is truncated before any designation; "
+                        "cannot verify it against %r", got, want)
+            return True, ""
+
+    return False, (f"Horizons returned {got!r} for {want!r} — "
+                   f"a stale or wrong record number?")
 
 
 def clear_cache():
