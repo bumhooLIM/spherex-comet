@@ -53,6 +53,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 import ztfcomet as zc
+from ztfcomet import orbit
 
 log = logging.getLogger("ztfcomet.survey")
 
@@ -285,16 +286,31 @@ def make_figures(target, table, figdir):
     counts = clean.groupby("rho_km").size()
     rho_ref = float(counts.idxmax())
 
+    # Perihelion elements let the abscissa be r_h - q and add the date axis.
+    # Osculate near the observations: non-gravitational forces move q and Tp.
+    elements = None
+    try:
+        record = target.resolve_orbit_record(float(table["obsjd"].median()))
+        elements = orbit.fetch_elements(record, epoch_jd=float(table["obsjd"].median()))
+    except Exception as exc:                                    # noqa: BLE001
+        log.warning("%s: no orbital elements (%s); plotting plain r_h",
+                    target.name, exc)
+
     ax = zc.plot_afrho_vs_rh({target.name: table}, rho_km=rho_ref, filters=bands,
-                             only_good=True)
-    ax.set_title(f"{target.name}   " + r"$\rho$ = " + f"{rho_ref:.0f} km   (clean frames only)")
+                             only_good=True, elements=elements)
+    ax.set_title(f"{target.name}   " + r"$\rho$ = " + f"{rho_ref:.0f} km   (clean frames only)",
+                 pad=34 if elements is not None else 12)
+    ax.figure.tight_layout()
     ax.figure.savefig(figdir / f"afrho_rh_{slug}.png", dpi=200)
     plt.close(ax.figure)
 
     if table["rho_km"].nunique() > 1:
         band = "ZTF_r" if "ZTF_r" in bands else bands[0]
-        ax = zc.plot_afrho_apertures(table, filters=[band], only_good=True)
-        ax.set_title(f"{target.name} — apertures ({band}, clean)")
+        ax = zc.plot_afrho_apertures(table, filters=[band], only_good=True,
+                                     elements=elements)
+        ax.set_title(f"{target.name} — apertures ({band}, clean)",
+                     pad=34 if elements is not None else 12)
+        ax.figure.tight_layout()
         ax.figure.savefig(figdir / f"afrho_apertures_{slug}.png", dpi=200)
         plt.close(ax.figure)
 
