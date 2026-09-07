@@ -27,7 +27,8 @@ from tqdm.auto import tqdm
 
 from . import config as cfg
 
-__all__ = ["construct_fitsurl", "build_urls", "save_urls", "download_urls", "DownloadReport"]
+__all__ = ["construct_fitsurl", "build_urls", "save_urls", "download_urls",
+           "choose_cutout_size", "verify_downloads", "DownloadReport"]
 
 log = logging.getLogger(__name__)
 
@@ -245,3 +246,116 @@ def download_urls(urls, outdir, overwrite=False, repair=True, progress=True,
         log.warning("%d downloads did not yield valid FITS; rerun to retry",
                     report.n_failed + report.n_rejected_not_fits)
     return report
+
+
+def choose_cutout_size(frames, query_config=None):
+    """Pick a cutout size from the target's own ephemeris.
+
+    Angular coma size scales as ``1/delta``, and a bright comet has a larger
+    detectable coma, so a fixed box is either wasteful for the faint distant
+    majority or too small for the few bright or nearby ones.
+
+    The large size is used when **either** condition holds at any epoch:
+
+    * the predicted total magnitude reaches ``bright_vmag`` or brighter, or
+    * the observer distance ``delta`` falls below ``close_delta_au``.
+
+    Parameters
+    ----------
+    frames : pandas.DataFrame
+        Frame table carrying ``Tmag`` and ``delta`` (from the exact-time
+        ephemeris).  Missing columns simply do not trigger their condition.
+    query_config : ztfcomet.config.QueryConfig, optional
+
+    Returns
+    -------
+    size : str
+        The IRSA size string to request.
+    reason : str
+        Human-readable justification, for the run log.
+
+    Notes
+    -----
+    ``delta`` is the *observer* distance, not the heliocentric distance: it is
+    what sets the angular size of the coma on the sky.
+    """
+    qc = query_config or cfg.QueryConfig()
+    if not qc.adaptive_cutout:
+        return qc.cutout_size, "adaptive sizing off"
+    if frames is None or len(frames) == 0:
+        return qc.cutout_size_small, "no frames"
+
+    def _min(column):
+        if column not in frames:
+            return None
+        values = pd.to_numeric(frames[column], errors="coerce").dropna()
+        return float(values.min()) if len(values) else None
+
+    vmag_min = _min("Tmag")
+    if vmag_min is None:
+        vmag_min = _min("tmag")
+    delta_min = _min("delta")
+
+    triggers = []
+    if vmag_min is not None and vmag_min < qc.bright_vmag:
+        triggers.append(f"Vmag_min={vmag_min:.2f} < {qc.bright_vmag:g}")
+    if delta_min is not None and delta_min < qc.close_delta_au:
+        triggers.append(f"delta_min={delta_min:.3f} au < {qc.close_delta_au:g}")
+
+    parts = []
+    if vmag_min is not None:
+        parts.append(f"Vmag_min={vmag_min:.2f}")
+    if delta_min is not None:
+        parts.append(f"delta_min={delta_min:.3f} au")
+    summary = ", ".join(parts) if parts else "no Vmag/delta available"
+
+    if triggers:
+        return qc.cutout_size_large, f"{summary} -> large ({'; '.join(triggers)})"
+    return qc.cutout_size_small, f"{summary} -> small"
+
+
+def verify_downloads(urls, outdir):
+    """Check that every requested URL produced a valid FITS file on disk.
+
+    Run after :func:`download_urls`.  The download step already rejects
+    non-FITS payloads, but this re-reads what is actually on disk, so a file
+    truncated by a full volume or removed afterwards is still caught.
+
+    Parameters
+    ----------
+    urls : iterable of str or pandas.DataFrame
+        The URL list that was requested.
+    outdir : path-like
+
+    Returns
+    -------
+    dict
+        ``n_expected``, ``n_present``, ``n_valid``, ``n_missing``,
+        ``n_corrupt``, ``missing`` and ``corrupt`` (file-name lists), and
+        ``complete`` (bool).
+    """
+    if isinstance(urls, pd.DataFrame):
+        urls = list(urls["fits_url"]) if "fits_url" in urls else []
+    outdir = Path(outdir)
+
+    expected = [str(u).split("?")[0].rsplit("/", 1)[-1] for u in urls if str(u).strip()]
+    missing, corrupt, valid = [], [], 0
+    for name in expected:
+        path = outdir / name
+        if not path.exists():
+            missing.append(name)
+        elif not _looks_like_fits(path):
+            corrupt.append(name)
+        else:
+            valid += 1
+
+    return {
+        "n_expected": len(expected),
+        "n_present": len(expected) - len(missing),
+        "n_valid": valid,
+        "n_missing": len(missing),
+        "n_corrupt": len(corrupt),
+        "missing": missing,
+        "corrupt": corrupt,
+        "complete": not missing and not corrupt,
+    }

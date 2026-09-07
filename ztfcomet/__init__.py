@@ -33,7 +33,8 @@ from . import (config, cutout, directory, gaia, horizons, phot, plotting,
 from .config import (
     PhotConfig, QueryConfig, Target, TARGETS, SOLAR_APPMAG_AB, get_target,
 )
-from .cutout import build_urls, construct_fitsurl, download_urls, save_urls
+from .cutout import (build_urls, choose_cutout_size, construct_fitsurl,
+                     download_urls, save_urls, verify_downloads)
 from .directory import (
     DATA_ROOT, FIG_ROOT, GAIA_ROOT, PROJECT_ROOT, RESULT_ROOT,
     data_dir, fig_dir, result_dir, target_slug,
@@ -45,10 +46,11 @@ from .horizons import (
 )
 from .phot import (
     ADVISORY_FLAGS, CRITICAL_FLAGS, FLAG_COLUMNS, attach_ephemerides,
-    build_frame_table, calibrate, compute_afrho, flag_contamination,
-    measure_photometry, run_photometry,
+    aperture_scale_ok, build_frame_table, calibrate, compute_afrho,
+    flag_contamination, measure_photometry, run_multi_aperture, run_photometry,
 )
-from .plotting import plot_afrho, plot_cutout, plot_cutout_grid, save_all_cutouts
+from .plotting import (plot_afrho, plot_afrho_apertures, plot_afrho_vs_rh,
+                       plot_cutout, plot_cutout_grid, save_all_cutouts, signed_rh)
 from .query import (
     extract_lastrecnum, query_sso_ephemeris, query_ztf_metadata, search_frames,
 )
@@ -69,9 +71,11 @@ __all__ = [
     "search_frames", "query_sso_ephemeris", "query_ztf_metadata", "extract_lastrecnum",
     # cutout
     "construct_fitsurl", "build_urls", "save_urls", "download_urls",
+    "choose_cutout_size", "verify_downloads",
     # phot
     "build_frame_table", "attach_ephemerides", "measure_photometry",
-    "calibrate", "compute_afrho", "run_photometry", "flag_contamination",
+    "calibrate", "compute_afrho", "run_photometry", "run_multi_aperture",
+    "flag_contamination", "aperture_scale_ok",
     "FLAG_COLUMNS", "CRITICAL_FLAGS", "ADVISORY_FLAGS",
     # gaia
     "GaiaCatalog", "effective_magnitude",
@@ -79,7 +83,8 @@ __all__ = [
     "resolve_record", "resolve_target_id", "verify_targetname",
     "parse_ambiguity_table", "is_fragment_designation",
     # plotting
-    "plot_cutout", "plot_cutout_grid", "plot_afrho", "save_all_cutouts",
+    "plot_cutout", "plot_cutout_grid", "plot_afrho", "plot_afrho_vs_rh",
+    "plot_afrho_apertures", "signed_rh", "save_all_cutouts",
     # helpers
     "setup_logging",
 ]

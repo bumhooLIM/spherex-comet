@@ -14,7 +14,9 @@ import logging
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
 import numpy as np
+import pandas as pd
 import astropy.units as u
 from astropy.coordinates import SkyCoord
 from astropy.io import fits
@@ -27,7 +29,8 @@ from tqdm.auto import tqdm
 from . import rcparams  # noqa: F401  — imported for its rcParams side effects
 from . import config as cfg
 
-__all__ = ["plot_cutout", "plot_cutout_grid", "plot_afrho", "save_all_cutouts"]
+__all__ = ["plot_cutout", "plot_cutout_grid", "plot_afrho", "plot_afrho_vs_rh",
+           "plot_afrho_apertures", "signed_rh", "save_all_cutouts"]
 
 log = logging.getLogger(__name__)
 
@@ -262,6 +265,138 @@ def plot_cutout_grid(table, datadir, target=None, ncols=4, nmax=12,
         ax.set_ylabel("")
     fig.tight_layout()
     return fig
+
+
+def signed_rh(table):
+    """Heliocentric distance signed by orbital leg: negative inbound.
+
+    An Af-rho vs r_h curve folds the pre- and post-perihelion legs on top of
+    each other, hiding the hysteresis that is often the point of the plot.
+    Signing r_h by the heliocentric range rate separates them on one axis:
+    ``r_rate < 0`` (approaching, pre-perihelion) becomes negative, ``r_rate > 0``
+    (receding, post-perihelion) stays positive, so the comet traces left to
+    right through perihelion at x = 0.
+
+    Falls back to unsigned r_h when ``r_rate`` is unavailable.
+    """
+    rh = pd.to_numeric(table["r"], errors="coerce")
+    if "r_rate" not in table:
+        return rh
+    rate = pd.to_numeric(table["r_rate"], errors="coerce")
+    sign = np.where(rate < 0, -1.0, 1.0)
+    return rh * np.where(np.isfinite(rate), sign, 1.0)
+
+
+def plot_afrho_vs_rh(tables, rho_km=None, filters=("ZTF_r",), only_good=True,
+                     split_perihelion=True, ax=None, colors=None, markers=None,
+                     legend=True, annotate_legs=True):
+    """Af-rho against heliocentric distance, clean points only.
+
+    Parameters
+    ----------
+    tables : DataFrame or mapping of label -> DataFrame
+    rho_km : float, optional
+        Select one aperture from a multi-aperture table.  Required when the
+        table holds more than one, since mixing apertures on one axis is
+        meaningless.
+    only_good : bool
+        Default **True** here: this figure is the science result, so flagged
+        frames are excluded rather than drawn as open symbols.
+    split_perihelion : bool
+        Sign r_h by orbital leg (see :func:`signed_rh`) so the inbound and
+        outbound branches do not overlap.  A marker at x = 0 is perihelion.
+
+    Returns
+    -------
+    matplotlib.axes.Axes
+    """
+    if not isinstance(tables, dict):
+        tables = {"target": tables}
+
+    if ax is None:
+        _, ax = plt.subplots(figsize=(10, 6))
+
+    palette = colors or plt.rcParams["axes.prop_cycle"].by_key().get("color", ["k"])
+    marker_cycle = markers or ["o", "s", "^", "D", "v", "P"]
+    saw_inbound = saw_outbound = False
+
+    for i, (label, table) in enumerate(tables.items()):
+        if table is None or len(table) == 0:
+            continue
+        sub = table
+        if rho_km is not None and "rho_km" in sub:
+            sub = sub[np.isclose(sub["rho_km"], rho_km)]
+        elif "rho_km" in sub and sub["rho_km"].nunique() > 1:
+            raise ValueError("table holds several apertures; pass rho_km=")
+
+        if only_good and "quality_ok" in sub:
+            sub = sub[sub["quality_ok"]]
+        sub = sub[np.isfinite(pd.to_numeric(sub.get("afrho0_cm"), errors="coerce"))]
+        if sub.empty:
+            continue
+
+        x = signed_rh(sub) if split_perihelion else pd.to_numeric(sub["r"], errors="coerce")
+        if split_perihelion and "r_rate" in sub:
+            rate = pd.to_numeric(sub["r_rate"], errors="coerce")
+            saw_inbound |= bool((rate < 0).any())
+            saw_outbound |= bool((rate >= 0).any())
+
+        for j, band in enumerate(filters):
+            keep = sub["filter"] == band
+            if not keep.any():
+                continue
+            name = f"{label} ({band})" if len(tables) > 1 or len(filters) > 1 else band
+            ax.errorbar(x[keep], sub.loc[keep, "afrho0_cm"],
+                        yerr=sub.loc[keep, "afrho0_cm_err"],
+                        fmt=marker_cycle[j % len(marker_cycle)], ms=6,
+                        color=palette[(j if len(tables) == 1 else i) % len(palette)],
+                        ecolor=palette[(j if len(tables) == 1 else i) % len(palette)],
+                        elinewidth=1, capsize=2, ls="none", label=name)
+
+    if split_perihelion and saw_inbound and saw_outbound:
+        ax.axvline(0, color="0.5", ls=":", lw=1.5)
+        if annotate_legs:
+            ax.annotate("pre-perihelion", xy=(0.02, 0.02), xycoords="axes fraction",
+                        fontsize=12, ha="left", va="bottom", color="0.35")
+            ax.annotate("post-perihelion", xy=(0.98, 0.02), xycoords="axes fraction",
+                        fontsize=12, ha="right", va="bottom", color="0.35")
+        ax.set_xlabel(r"$-r_\mathrm{h}$  |  $+r_\mathrm{h}$  (AU)")
+        # Show distance, not the sign, on the tick labels.
+        ax.xaxis.set_major_formatter(
+            mticker.FuncFormatter(lambda v, _pos: f"{abs(v):g}"))
+    else:
+        ax.set_xlabel(r"$r_\mathrm{h}$ (AU)")
+
+    ax.set_ylabel(r"$A(0\degree)f\rho$ (cm)")
+    if legend:
+        ax.legend(fontsize=11, frameon=False)
+    return ax
+
+
+def plot_afrho_apertures(table, filters=("ZTF_r",), only_good=True,
+                         split_perihelion=True, ax=None, legend=True):
+    """Af-rho vs r_h for every aperture in a multi-aperture table.
+
+    One colour per ``rho_km``.  Because Af-rho for a steady-state ``1/rho`` coma
+    is independent of aperture, the curves separating tells you the coma is not
+    in steady state -- which is why plotting them together is worth doing.
+    """
+    if ax is None:
+        _, ax = plt.subplots(figsize=(10, 6))
+    if table is None or len(table) == 0 or "rho_km" not in table:
+        raise ValueError("need a table with an rho_km column")
+
+    radii = sorted(table["rho_km"].dropna().unique())
+    cmap = plt.get_cmap("viridis")
+    for i, rho in enumerate(radii):
+        colour = cmap(i / max(len(radii) - 1, 1))
+        plot_afrho_vs_rh({f"{rho / 1000:g}k km": table}, rho_km=rho, filters=filters,
+                         only_good=only_good, split_perihelion=split_perihelion,
+                         ax=ax, colors=[colour], legend=False,
+                         annotate_legs=(i == 0))
+    if legend:
+        ax.legend(fontsize=10, frameon=False, title=r"$\rho$")
+    return ax
 
 
 def plot_afrho(tables, filters=("ZTF_r",), x="jd", perihelion_jd=None,
