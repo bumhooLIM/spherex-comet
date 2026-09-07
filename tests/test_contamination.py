@@ -561,3 +561,59 @@ def test_non_finite_epochs_are_dropped(monkeypatch):
     monkeypatch.setattr(qmod, "Horizons", Fake)
     qmod.query_sso_ephemeris(1, epochs=[2460900.5, float("nan")])
     assert sent[0] == [2460900.5]
+
+
+@pytest.mark.parametrize("returned,requested,ok", [
+    # Horizons clips targetname at 31 chars, losing the designation entirely.
+    ("Bernardinelli-Bernstein (C/2014", "2014 UN271", True),
+    ("Tsuchinshan-ATLAS (C/2023 A3)", "2023 A3", True),
+    ("Ye (P/2025 UX109)", "2025 UX109", True),
+    ("ATLAS (C/2022 QE78)", "2022 QE78", True),
+    ("29P/Schwassmann-Wachmann 1", "29P", True),      # hyphen in the NAME, not a fragment
+    ("PANSTARRS (C/2017 K2)", "2023 A3", False),      # genuinely the wrong comet
+    ("Styx (905)", "2P", False),
+    ("240P-B/NEAT", "240P", False),
+])
+def test_verify_targetname_handles_truncation_and_long_names(returned, requested, ok):
+    """A clipped name must not fail verification, but a wrong one still must."""
+    assert horizons.verify_targetname(returned, requested)[0] is ok
+
+
+def test_aperture_scale_test_bounds():
+    """FWHM < r_ap < 1 arcmin. Both bounds must actually bind."""
+    from ztfcomet import phot as ph
+
+    # delta = 1.5 au, 1.012"/px, FWHM 2.85 px -> 2.9"
+    ok, r, fwhm = ph.aperture_scale_ok(10_000, 1.5, 1.012, 2.85)
+    assert ok and fwhm < r < 60
+
+    # Too large: 40000 km at 0.3 au subtends 184"
+    ok, r, _ = ph.aperture_scale_ok(40_000, 0.3, 1.012, 2.85)
+    assert not ok and r > 60
+
+    # Too small: 1000 km at 5 au is well under the seeing disc
+    ok, r, fwhm = ph.aperture_scale_ok(1_000, 5.0, 1.012, 2.85)
+    assert not ok and r < fwhm
+
+
+def test_aperture_scale_test_rejects_bad_input():
+    from ztfcomet import phot as ph
+    assert ph.aperture_scale_ok(np.nan, 1.0, 1.0, 3.0)[0] is False
+    assert ph.aperture_scale_ok(10_000, 0.0, 1.0, 3.0)[0] is False
+
+
+def test_signed_rh_separates_the_orbital_legs():
+    """Pre-perihelion goes negative so the two legs do not overlap."""
+    from ztfcomet import plotting as plotting_mod
+
+    table = pd.DataFrame({"r": [2.0, 1.5, 1.5, 2.0],
+                          "r_rate": [-5.0, -1.0, 1.0, 5.0]})
+    x = plotting_mod.signed_rh(table)
+    assert list(np.sign(x)) == [-1, -1, 1, 1]
+    assert list(np.abs(x)) == [2.0, 1.5, 1.5, 2.0]
+
+
+def test_signed_rh_falls_back_without_r_rate():
+    from ztfcomet import plotting as plotting_mod
+    table = pd.DataFrame({"r": [2.0, 1.5]})
+    assert list(plotting_mod.signed_rh(table)) == [2.0, 1.5]
