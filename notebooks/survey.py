@@ -329,12 +329,27 @@ def parse_args(argv=None):
     p.add_argument("--no-resume", action="store_true", help="reprocess completed targets")
     p.add_argument("--overwrite", action="store_true", help="re-download existing files")
     p.add_argument("--limit", type=int, help="process at most this many targets")
+    p.add_argument("--allow-fallback-root", action="store_true",
+                   help="proceed even if the SSD data root is unavailable")
     return p.parse_args(argv)
 
 
 def main(argv=None):
     args = parse_args(argv)
     root = zc.directory.DATA_ROOT
+
+    # Refuse to start on the in-project fallback. The SSD holds both the data
+    # and survey_status.csv, so running without it silently restarts the whole
+    # survey in the wrong place -- which is exactly what happened once when the
+    # volume was briefly unresolvable at import.
+    if zc.directory.using_fallback_root() and not args.allow_fallback_root:
+        sys.stderr.write(
+            f"REFUSING TO START: data root resolved to {root}, the in-project\n"
+            f"fallback, not {zc.directory.SSD_DATA_ROOT}.\n"
+            f"The SSD holds the existing data and the resume checkpoint.\n"
+            f"Mount it, or set ZTFCOMET_DATA, or pass --allow-fallback-root.\n")
+        return 2
+
     root.mkdir(parents=True, exist_ok=True)
 
     stamp = datetime.now().strftime("%Y%m%dT%H%M%S")
