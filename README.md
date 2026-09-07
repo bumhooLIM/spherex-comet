@@ -81,6 +81,8 @@ ztfcomet/            the package
 ├── phot.py          aperture photometry, calibration, Afrho
 ├── gaia.py          Gaia DR3 cone search + contamination test
 ├── horizons.py      designation -> orbit record, fragment-aware
+├── orbit.py         perihelion elements, Kepler t(r_h) for the date axis
+├── profile.py       radial SB profile of the comet vs field stars (1/rho test)
 ├── plotting.py      annotated cutouts, Afrho lightcurves
 └── rcparams.py      shared matplotlib style
 
@@ -138,6 +140,17 @@ and 5 of the 6 highest Afρ points.
 > The catalogue is complete only to `G = 18.5`, so "uncontaminated" means "no
 > *catalogued* source". Gaia `G` is also compared directly with a visual `Tmag`;
 > the passbands differ by ~0.1–0.2 mag, small against a 0.28 mag threshold.
+
+**Coma radial profile** — aperture photometry says how much light is in the
+coma, not how it is distributed. `ztfcomet.profile` measures the comet's
+surface brightness in annuli at 0.5–10 px (0.5 px step, sigma-clipped mean,
+with the plain mean kept as a check on the clipping), on a ×4 bilinear
+oversampled cutout so 0.5 px annuli on 1″ pixels are well sampled. Up to 20
+unsaturated, isolated field stars with S/N > 10 are profiled on the same frame
+and stacked (sigma-clipped median) as the PSF reference. A power law is fitted
+outside the core: **−1 is a steady-state coma; stars give ≈ −4.** Output:
+`results/<target>/profile_*.csv`, `fig/<target>/profile/` and a per-target
+summary. On 24P the clean-frame median slope is −1.07.
 
 **Afρ** — A'Hearn et al. (1984):
 
