@@ -307,6 +307,65 @@ def test_verify_targetname_accepts_a_deliberately_requested_fragment():
     assert horizons.verify_targetname("240P-B/NEAT", "240P", allow_fragment=True)[0] is True
 
 
+def test_regression_designations_are_queried_as_small_bodies(monkeypatch):
+    """A bare designation must not be matched against major bodies.
+
+    Horizons guesses the object class. Left to guess, ``"2P"`` resolves to
+    **Styx (905)**, a moon of Pluto, and returns a full, plausible-looking
+    ephemeris for it — no error, no ambiguity listing, just the wrong object.
+    Every lookup must force ``id_type="smallbody"``.
+    """
+    seen = {}
+
+    class Fake:
+        def __init__(self, id=None, id_type=None, location=None, epochs=None):
+            seen["id"], seen["id_type"] = id, id_type
+        def ephemerides(self, **k):
+            raise ValueError("Ambiguous target name\n"
+                             "  90000091    2022    2P             2P    Encke\n")
+
+    monkeypatch.setattr(horizons, "Horizons", Fake)
+    horizons.clear_cache()
+    horizons.resolve_record("2P", epoch_jd=2461000.0)
+
+    assert seen["id_type"] == horizons.SMALLBODY, \
+        "designation probed without id_type='smallbody'; 2P would resolve to Styx"
+
+
+def test_ephemeris_queries_also_force_smallbody(monkeypatch):
+    from ztfcomet import query as qmod
+
+    seen = {}
+
+    class Fake:
+        def __init__(self, id=None, id_type=None, location=None, epochs=None):
+            seen["id_type"] = id_type
+            self._n = len(epochs)
+        def ephemerides(self, **k):
+            class T:
+                def __init__(self, n): self._n = n
+                def to_pandas(self):
+                    return pd.DataFrame({"datetime_jd": np.arange(self._n)})
+            return T(self._n)
+
+    monkeypatch.setattr(qmod, "Horizons", Fake)
+    qmod.query_sso_ephemeris("2P", epochs=[2461000.0])
+    assert seen["id_type"] == horizons.SMALLBODY
+
+
+def test_2p_apparition_listing_selects_a_recent_solution():
+    """2P/Encke has ~60 apparition records going back to 1786."""
+    listing = "Ambiguous target name; provide unique id:\n" + "\n".join(
+        f"    {90000031 + i}    {1786 + i * 4}    2P             2P              Encke"
+        for i in range(60))
+    records = horizons.parse_ambiguity_table(listing)
+    assert len(records) == 60
+
+    chosen = horizons.select_record(records, epoch_jd=2461000.0, designation="2P")
+    assert chosen.epoch_yr >= 2000, "picked a 19th-century orbit solution"
+    assert not chosen.is_fragment
+
+
 def test_explicit_record_numbers_pass_through_unchanged():
     assert horizons.resolve_record(90001212) is None
     assert horizons.resolve_target_id(90001212) == 90001212
@@ -324,3 +383,51 @@ def test_config_exposes_the_fragment_as_its_own_target():
     fragment = cfg.get_target("240P-B")
     assert fragment.allow_fragment
     assert horizons.is_fragment_designation(fragment.query_designation)
+
+
+def test_search_frames_uses_the_designation_not_the_empty_horizons_id(monkeypatch):
+    """Targets carry a designation; ``horizons_id`` is None for all of them.
+
+    ``search_frames`` read ``target.horizons_id`` directly and passed None to
+    Horizons, which aborted every query with "'id' parameter not set" — a whole
+    run producing zero frames and only a warning.
+    """
+    from ztfcomet import query as qmod
+
+    seen = {}
+
+    def fake_eph(target_id, epochs, **kw):
+        seen["target_id"] = target_id
+        return pd.DataFrame()
+
+    monkeypatch.setattr(qmod, "query_sso_ephemeris", fake_eph)
+    target = cfg.get_target("24P")
+    qmod.search_frames(target, progress=False)
+
+    assert seen["target_id"] is not None, "passed None as the Horizons id"
+    assert str(seen["target_id"]) not in ("", "None")
+
+
+def test_ambiguity_fallback_inside_query_is_fragment_aware(monkeypatch):
+    """The retry path inside query_sso_ephemeris must not take the last record."""
+    from ztfcomet import query as qmod
+
+    tried = []
+
+    class Fake:
+        def __init__(self, id=None, id_type=None, location=None, epochs=None):
+            tried.append(id)
+            self._id = id
+        def ephemerides(self, **k):
+            if str(self._id) == "240P":
+                raise ValueError(AMBIGUITY_240P)
+            class T:
+                def to_pandas(self):
+                    return pd.DataFrame({"datetime_jd": [2460900.5]})
+            return T()
+
+    monkeypatch.setattr(qmod, "Horizons", Fake)
+    qmod.query_sso_ephemeris("240P", epochs=[2460900.5])
+
+    assert 90001213 not in tried, "retried with the fragment 240P-B"
+    assert 90001212 in tried or 90001211 in tried

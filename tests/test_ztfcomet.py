@@ -178,7 +178,7 @@ def test_ephemeris_chunking_splits_long_epoch_lists(monkeypatch):
     seen = []
 
     class Fake:
-        def __init__(self, id=None, location=None, epochs=None):
+        def __init__(self, id=None, id_type=None, location=None, epochs=None):
             seen.append(len(epochs))
             self._n = len(epochs)
         def ephemerides(self, **k):

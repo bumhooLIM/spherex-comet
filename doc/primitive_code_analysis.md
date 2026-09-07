@@ -657,3 +657,42 @@ Two limits belong with any result: the catalogue stops at `G = 18.5`, so
 "uncontaminated" means "no *catalogued* source"; and Gaia `G` is compared
 directly with a visual `Tmag`, a ~0.1–0.2 mag mismatch against a 0.28 mag
 threshold.
+
+### C27. A bare designation is not necessarily read as a comet
+
+Horizons guesses the object class of an id it is given. Asking for `2P` with no
+class hint returns **Styx (905)** — a moon of Pluto — with a complete,
+plausible-looking ephemeris and no error, no warning, and no ambiguity listing.
+The wrong-object failure is entirely silent; the only clue is that `Tmag` is
+absent, because satellites do not carry cometary magnitude parameters.
+
+```
+Horizons(id="2P", ...)                        -> Styx (905)
+Horizons(id="2P", id_type="smallbody", ...)   -> ambiguity listing, 61 records
+                                                 for 2P/Encke (1786 .. present)
+```
+
+Every Horizons call in the package now passes `id_type="smallbody"`. Record
+numbers are unaffected — they resolve identically with or without the hint.
+
+This is the third variant of the same failure mode, after the fragment
+substitution (C25) and stale record numbers (C24): **Horizons will answer a
+question you did not ask, and the answer looks fine.** `verify_targetname` is
+the backstop for all three, and it is the reason this one was caught.
+
+### C28. `search_frames` read the retired `horizons_id`
+
+When targets moved from record numbers to designations (C24), `Target.horizons_id`
+became `None` for every entry — but `query.search_frames` still read it directly
+and passed `None` to Horizons. Every query aborted with `'id' parameter not set`,
+and because the failure was handled as "no ephemeris returned", a full run over
+two comets completed successfully with **zero frames** and only a warning.
+
+`search_frames` now resolves the designation for the mid-point of the query
+window, logs the record it chose, and verifies `targetname` before searching.
+
+A related gap closed at the same time: `query_sso_ephemeris` had its own
+ambiguity-retry path that still used `extract_lastrecnum` — "take the last
+record" — so a designation resolved *inside* that function would have picked the
+fragment for 240P even though the resolver did the right thing everywhere else.
+It now goes through `horizons.select_record` like every other path.

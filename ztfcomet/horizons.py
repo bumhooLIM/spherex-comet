@@ -18,6 +18,12 @@ Taking the *last* record — which is what the predecessor's
 comet, not the parent itself.  Nothing in the returned table announces the
 substitution; only ``targetname`` records it, and the old code never looked.
 
+**A bare designation may not be read as a comet at all.**  Horizons guesses the
+object class, and ``"2P"`` is resolved to **Styx (905)**, a moon of Pluto —
+returning a full, plausible-looking ephemeris for the wrong body.  Every query
+here therefore passes ``id_type="smallbody"``, which forces the small-body
+lookup and turns ``"2P"`` into the expected apparition listing for 2P/Encke.
+
 **Record numbers are not stable.**  Horizons renumbers its small-body records.
 The numbers hardcoded in the pre-merge notebooks (``90001203``, ``90001204``,
 labelled "240P/NEAT") today resolve to **233P/La Sagra** and **234P/LINEAR** —
@@ -41,7 +47,7 @@ from astroquery.jplhorizons import Horizons
 from . import config as cfg
 
 __all__ = [
-    "HorizonsRecord", "parse_ambiguity_table", "is_fragment_designation",
+    "SMALLBODY", "HorizonsRecord", "parse_ambiguity_table", "is_fragment_designation",
     "split_designation", "resolve_record", "resolve_target_id",
     "verify_targetname", "clear_cache",
 ]
@@ -61,6 +67,10 @@ _RECORD_RE = re.compile(
     r"(?P<primary>\S+)\s*"
     r"(?P<name>.*?)\s*$"
 )
+
+#: Forces Horizons to search small bodies.  Without it a bare designation is
+#: matched against major bodies and satellites first: "2P" returns Styx (905).
+SMALLBODY = "smallbody"
 
 #: designation -> resolved record, so a multi-chunk run resolves once.
 _CACHE: dict[tuple[str, int | None, bool], "HorizonsRecord"] = {}
@@ -221,7 +231,7 @@ def select_record(records, epoch_jd=None, allow_fragment=False,
 
 
 def resolve_record(designation, epoch_jd=None, allow_fragment=False,
-                   location=cfg.ZTF_OBSCODE, use_cache=True):
+                   location=cfg.ZTF_OBSCODE, use_cache=True, id_type=SMALLBODY):
     """Resolve *designation* to a Horizons record, avoiding fragments.
 
     Probes Horizons once with the bare designation.  An unambiguous designation
@@ -259,7 +269,7 @@ def resolve_record(designation, epoch_jd=None, allow_fragment=False,
         return _CACHE[key]
 
     try:
-        Horizons(id=text, location=location,
+        Horizons(id=text, id_type=id_type, location=location,
                  epochs=[epoch_jd or 2451545.0]).ephemerides(quantities="1")
         return None                       # unambiguous
     except ValueError as exc:
@@ -284,14 +294,15 @@ def resolve_record(designation, epoch_jd=None, allow_fragment=False,
 
 
 def resolve_target_id(designation, epoch_jd=None, allow_fragment=False,
-                      location=cfg.ZTF_OBSCODE):
+                      location=cfg.ZTF_OBSCODE, id_type=SMALLBODY):
     """Horizons id to query for *designation* — a record number, or the name.
 
     Convenience wrapper around :func:`resolve_record` for callers that only need
     something to pass to :class:`~astroquery.jplhorizons.Horizons`.
     """
     record = resolve_record(designation, epoch_jd=epoch_jd,
-                            allow_fragment=allow_fragment, location=location)
+                            allow_fragment=allow_fragment, location=location,
+                            id_type=id_type)
     return record.record if record is not None else designation
 
 

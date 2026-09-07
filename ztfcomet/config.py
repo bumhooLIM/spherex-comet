@@ -10,6 +10,7 @@ once, here, makes that class of mistake impossible.
 
 from __future__ import annotations
 
+import datetime
 import logging
 from dataclasses import dataclass, field, replace
 
@@ -21,6 +22,20 @@ __all__ = [
     "EPHEM_QUANTITIES_FULL", "QueryConfig", "PhotConfig", "Target",
     "TARGETS", "get_target",
 ]
+
+#: Default start of the survey window.  ZTF cutouts before this are not part of
+#: the current programme; override per target or with ``--start``.
+DEFAULT_START_DATE = "2025-03-01"
+
+
+def today() -> str:
+    """Today's date as ``YYYY-MM-DD``.
+
+    The default query window runs to *present*, so the end date is evaluated
+    when a :class:`Target` is created rather than frozen into the source.
+    """
+    return datetime.date.today().isoformat()
+
 
 #: MPC observatory code for Palomar / ZTF.
 ZTF_OBSCODE = "I41"
@@ -65,7 +80,9 @@ class QueryConfig:
         window searched around each step.  Also scales the search box, which is
         sized from the target's own apparent motion over this interval.
     rh_max, vmag_max : float
-        Cuts applied to the coarse ephemeris before any image search.
+        Cuts applied to the coarse ephemeris before any image search.  The
+        default ``vmag_max`` of 19 keeps epochs where the comet is plausibly
+        detectable in a 30 s ZTF exposure (5-sigma limit ~20.5).
     cutout_size : str
         IRSA cutout size string, e.g. ``"10arcmin"``.
     is_cutout : bool
@@ -189,8 +206,8 @@ class Target:
     horizons_id: str | int | None = None
     designation: str | None = None
     allow_fragment: bool = False
-    start_date: str = "2025-01-01"
-    end_date: str = "2025-12-31"
+    start_date: str = DEFAULT_START_DATE
+    end_date: str = field(default_factory=today)
     orbit_records: dict[float, int] = field(default_factory=dict)
     perihelion_jd: dict[str, float] = field(default_factory=dict)
     query: QueryConfig = field(default_factory=QueryConfig)
@@ -241,9 +258,7 @@ TARGETS: dict[str, Target] = {
     "24P": Target(
         name="24P",
         designation="24P",
-        start_date="2025-07-01",
-        end_date="2025-12-31",
-        query=QueryConfig(interval_days=5, rh_max=9, vmag_max=20),
+        query=QueryConfig(interval_days=5, rh_max=9),
         note="24P/Schaumasse. Default test target for query.ipynb and afrho.ipynb.",
     ),
     "240P": Target(
@@ -269,9 +284,7 @@ TARGETS: dict[str, Target] = {
     "2P": Target(
         name="2P",
         designation="2P",
-        start_date="2025-07-01",
-        end_date="2026-05-31",
-        query=QueryConfig(interval_days=10, rh_max=9, vmag_max=20),
+        query=QueryConfig(interval_days=5, rh_max=9),
         note="2P/Encke.",
     ),
     "2019Y3": Target(
