@@ -318,7 +318,27 @@ def plot_afrho_vs_rh(tables, rho_km=None, filters=("ZTF_r",), only_good=True,
 
     palette = colors or plt.rcParams["axes.prop_cycle"].by_key().get("color", ["k"])
     marker_cycle = markers or ["o", "s", "^", "D", "v", "P"]
+
+    def _selected(table):
+        """The rows this call will actually draw, for the pre-scan."""
+        sub = table
+        if rho_km is not None and "rho_km" in sub:
+            sub = sub[np.isclose(sub["rho_km"], rho_km)]
+        if only_good and "quality_ok" in sub:
+            sub = sub[sub["quality_ok"]]
+        return sub
+
+    # Decide about signing BEFORE plotting. Signing exists to separate two
+    # orbital legs; with only one leg it would render every r_h negative under
+    # an axis labelled r_h. Most targets in a 18-month window are single-leg.
     saw_inbound = saw_outbound = False
+    for _t in tables.values():
+        if _t is None or len(_t) == 0 or "r_rate" not in _t:
+            continue
+        rate = pd.to_numeric(_selected(_t)["r_rate"], errors="coerce")
+        saw_inbound |= bool((rate < 0).any())
+        saw_outbound |= bool((rate >= 0).any())
+    use_signed = bool(split_perihelion and saw_inbound and saw_outbound)
 
     for i, (label, table) in enumerate(tables.items()):
         if table is None or len(table) == 0:
@@ -335,11 +355,7 @@ def plot_afrho_vs_rh(tables, rho_km=None, filters=("ZTF_r",), only_good=True,
         if sub.empty:
             continue
 
-        x = signed_rh(sub) if split_perihelion else pd.to_numeric(sub["r"], errors="coerce")
-        if split_perihelion and "r_rate" in sub:
-            rate = pd.to_numeric(sub["r_rate"], errors="coerce")
-            saw_inbound |= bool((rate < 0).any())
-            saw_outbound |= bool((rate >= 0).any())
+        x = signed_rh(sub) if use_signed else pd.to_numeric(sub["r"], errors="coerce")
 
         for j, band in enumerate(filters):
             keep = sub["filter"] == band
@@ -353,7 +369,7 @@ def plot_afrho_vs_rh(tables, rho_km=None, filters=("ZTF_r",), only_good=True,
                         ecolor=palette[(j if len(tables) == 1 else i) % len(palette)],
                         elinewidth=1, capsize=2, ls="none", label=name)
 
-    if split_perihelion and saw_inbound and saw_outbound:
+    if use_signed:
         ax.axvline(0, color="0.5", ls=":", lw=1.5)
         if annotate_legs:
             ax.annotate("pre-perihelion", xy=(0.02, 0.02), xycoords="axes fraction",
@@ -365,7 +381,12 @@ def plot_afrho_vs_rh(tables, rho_km=None, filters=("ZTF_r",), only_good=True,
         ax.xaxis.set_major_formatter(
             mticker.FuncFormatter(lambda v, _pos: f"{abs(v):g}"))
     else:
-        ax.set_xlabel(r"$r_\mathrm{h}$ (AU)")
+        # Single leg: plain r_h, labelled with which leg, so the figure is not
+        # silently ambiguous about where the comet was in its orbit.
+        leg = ("inbound, pre-perihelion" if saw_inbound and not saw_outbound
+               else "outbound, post-perihelion" if saw_outbound and not saw_inbound
+               else None)
+        ax.set_xlabel(r"$r_\mathrm{h}$ (AU)" + (f"   [{leg}]" if leg else ""))
 
     ax.set_ylabel(r"$A(0\degree)f\rho$ (cm)")
     if legend:
