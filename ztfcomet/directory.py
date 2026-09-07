@@ -27,10 +27,15 @@ PosixPath('/Volumes/T7/data/ztf-comet/24P')
 
 from __future__ import annotations
 
+import logging
 import os
+import time
 from pathlib import Path
 
+log = logging.getLogger(__name__)
+
 __all__ = [
+    "using_fallback_root",
     "PROJECT_ROOT", "DATA_ROOT", "RESULT_ROOT", "FIG_ROOT", "DOC_ROOT",
     "SSD_DATA_ROOT", "GAIA_ROOT", "target_slug", "data_dir", "result_dir",
     "fig_dir", "describe",
@@ -63,12 +68,33 @@ def _find_project_root(start: Path | None = None) -> Path:
 PROJECT_ROOT: Path = _find_project_root()
 
 
+def _probe(path: Path, attempts: int = 3, delay: float = 1.0) -> bool:
+    """Is *path* a readable directory, retrying a sleeping external volume?
+
+    An external SSD that has spun down can fail its first ``is_dir()`` and
+    answer normally a second later.  Taking the first answer as final sent a
+    resumed survey run to the local fallback, where it found no status file and
+    silently restarted the whole thing in the wrong place.
+    """
+    for attempt in range(attempts):
+        try:
+            if path.is_dir():
+                return True
+        except OSError:
+            pass
+        if attempt < attempts - 1:
+            time.sleep(delay)
+    return False
+
+
 def _resolve_data_root() -> Path:
     env = os.environ.get("ZTFCOMET_DATA")
     if env:
         return Path(env).expanduser()
-    if SSD_DATA_ROOT.is_dir():
+    if _probe(SSD_DATA_ROOT):
         return SSD_DATA_ROOT
+    log.warning("SSD data root %s is not available; falling back to %s",
+                SSD_DATA_ROOT, PROJECT_ROOT / "data")
     return PROJECT_ROOT / "data"
 
 
@@ -143,3 +169,14 @@ def describe() -> str:
         f"GAIA_ROOT    : {GAIA_ROOT}"
         f"{'' if GAIA_ROOT.is_dir() else '   (MISSING — contamination flagging disabled)'}",
     ])
+
+
+def using_fallback_root() -> bool:
+    """True when DATA_ROOT is the in-project fallback rather than the SSD.
+
+    A long unattended run should refuse to start in that state: the SSD holds
+    both the existing data and the resume checkpoint, so silently using the
+    fallback means redoing everything into the wrong place.
+    """
+    return (not os.environ.get("ZTFCOMET_DATA")
+            and DATA_ROOT == PROJECT_ROOT / "data")
