@@ -6,7 +6,7 @@
 - Package: `directory`, `config`, `query`, `cutout`, `phot`, `plotting`, `rcparams`.
 - `notebooks/main.py` runs query → download → photometry → figures for one or many targets.
 - Validation notebooks: `query.ipynb`, `afrho.ipynb`, `figure.ipynb` (test target 24P).
-- 38 offline tests pass; `test_regression_c*` pin the reviewed defects.
+- 38 offline tests pass (`pytest tests/ -q`); `test_regression_c*` pin the reviewed defects.
 - Verified end-to-end on the 111-frame C/2024 E1 sample: 91/111 unflagged,
   A(0)fρ = 448–1552 cm at ρ = 15000 km, g and r tracking each other.
 - Review: `doc/primitive_code_analysis.md` (22 concerns, C1–C22).
@@ -15,13 +15,16 @@ Four photometric corrections applied vs. the old notebook: per-frame zeropoint (
 colour term (C4), aperture correction (C5), uncertainties through to Afρ (C8).
 
 ## Next Steps
-1. **`pytest` is not installed in `spherex`.** Tests currently run only via a shim.
-   `conda install -n spherex pytest`, then `pytest tests/ -q`.
+1. **Publish.** The repo is committed locally but has no remote. Create an empty
+   `ztfcomet` repo on GitHub, then:
+   `git remote add origin <url> && git push -u origin main`.
 2. Re-reduce 240P and 24P with the fixed pipeline — every pre-merge Afρ value is
    invalid (C1). Old figures in `notebooks/legacy/afrho_240P.ipynb` must not be reused.
 3. Repair the 2 corrupt downloads in the 2024E1 set: rerun with `--overwrite` or
    let `download_urls(..., repair=True)` handle them; both URLs serve valid FITS today.
-4. Consider a per-target `phase_beta` in `config.py` — 0.03 mag/deg is a generic
+4. `pip install -e .` has not been run; `main.py` and the notebooks reach the
+   package via `sys.path`. Install it properly when convenient.
+5. Consider a per-target `phase_beta` in `config.py` — 0.03 mag/deg is a generic
    dust value, and `phase_beta_err` is currently 0 so it contributes no uncertainty.
 
 ## Blind Spots / Dead Ends
