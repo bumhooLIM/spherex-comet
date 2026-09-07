@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ztfcomet"
-version = "0.2.0"
+version = "0.3.0"
 description = "Query and analyse ZTF (Palomar, I41) observations of comets: cutout retrieval, aperture photometry, Af-rho"
 authors = [{ name = "Bumhoo Lim", email = "bumhoo7@snu.ac.kr" }]
 readme = "README.md"

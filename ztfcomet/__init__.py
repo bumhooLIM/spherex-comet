@@ -28,35 +28,42 @@ from __future__ import annotations
 
 import logging
 
-from . import config, cutout, directory, phot, plotting, query, rcparams
+from . import (config, cutout, directory, gaia, horizons, phot, plotting,
+               query, rcparams)
 from .config import (
     PhotConfig, QueryConfig, Target, TARGETS, SOLAR_APPMAG_AB, get_target,
 )
 from .cutout import build_urls, construct_fitsurl, download_urls, save_urls
 from .directory import (
-    DATA_ROOT, FIG_ROOT, PROJECT_ROOT, RESULT_ROOT,
+    DATA_ROOT, FIG_ROOT, GAIA_ROOT, PROJECT_ROOT, RESULT_ROOT,
     data_dir, fig_dir, result_dir, target_slug,
+)
+from .gaia import GaiaCatalog, effective_magnitude
+from .horizons import (
+    is_fragment_designation, parse_ambiguity_table, resolve_record,
+    resolve_target_id, verify_targetname,
 )
 from .phot import (
     ADVISORY_FLAGS, CRITICAL_FLAGS, FLAG_COLUMNS, attach_ephemerides,
-    build_frame_table, calibrate, compute_afrho, measure_photometry,
-    run_photometry,
+    build_frame_table, calibrate, compute_afrho, flag_contamination,
+    measure_photometry, run_photometry,
 )
 from .plotting import plot_afrho, plot_cutout, plot_cutout_grid, save_all_cutouts
 from .query import (
     extract_lastrecnum, query_sso_ephemeris, query_ztf_metadata, search_frames,
 )
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
     "__version__",
     # submodules
-    "config", "cutout", "directory", "phot", "plotting", "query", "rcparams",
+    "config", "cutout", "directory", "gaia", "horizons", "phot", "plotting",
+    "query", "rcparams",
     # config
     "Target", "QueryConfig", "PhotConfig", "TARGETS", "get_target", "SOLAR_APPMAG_AB",
     # directory
-    "PROJECT_ROOT", "DATA_ROOT", "RESULT_ROOT", "FIG_ROOT",
+    "PROJECT_ROOT", "DATA_ROOT", "RESULT_ROOT", "FIG_ROOT", "GAIA_ROOT",
     "data_dir", "result_dir", "fig_dir", "target_slug",
     # query
     "search_frames", "query_sso_ephemeris", "query_ztf_metadata", "extract_lastrecnum",
@@ -64,8 +71,13 @@ __all__ = [
     "construct_fitsurl", "build_urls", "save_urls", "download_urls",
     # phot
     "build_frame_table", "attach_ephemerides", "measure_photometry",
-    "calibrate", "compute_afrho", "run_photometry",
+    "calibrate", "compute_afrho", "run_photometry", "flag_contamination",
     "FLAG_COLUMNS", "CRITICAL_FLAGS", "ADVISORY_FLAGS",
+    # gaia
+    "GaiaCatalog", "effective_magnitude",
+    # horizons
+    "resolve_record", "resolve_target_id", "verify_targetname",
+    "parse_ambiguity_table", "is_fragment_designation",
     # plotting
     "plot_cutout", "plot_cutout_grid", "plot_afrho", "save_all_cutouts",
     # helpers

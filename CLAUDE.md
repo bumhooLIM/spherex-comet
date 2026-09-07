@@ -20,7 +20,7 @@
 - **Configuration:** Per-target constants (orbit records, dates, ρ, β) belong in `ztfcomet/config.py`, never pasted into a notebook.
 
 ## Architecture & Structure
-- `ztfcomet/`: The package. `directory` (paths), `config` (targets and tunables), `query` (Horizons + IRSA), `cutout` (URLs + validated download), `phot` (photometry + Afρ), `plotting`, `rcparams`.
+- `ztfcomet/`: The package. `directory` (paths), `config` (targets and tunables), `query` (Horizons + IRSA), `horizons` (designation → orbit record), `cutout` (URLs + validated download), `phot` (photometry + Afρ), `gaia` (contamination), `plotting`, `rcparams`.
 - `notebooks/`: `main.py` (end-to-end driver), `query.ipynb`, `afrho.ipynb`, `figure.ipynb`. Validation and figure work only — **science logic belongs in the package**, so that what runs in batch is what the notebooks validate.
 - `notebooks/legacy/`: Pre-merge notebooks, outputs stripped, provenance only. They do not run against this package and contain known bugs. **Do not copy code out of them.**
 - `doc/`: Technical guidebooks. `primitive_code_analysis.md` is the review that motivated this structure.
@@ -36,6 +36,10 @@ These are fixed bugs with regression tests. Changing them silently corrupts resu
 - **Frames are flagged, never dropped.** `quality_ok` covers `CRITICAL_FLAGS` only; advisory flags qualify a measurement without invalidating it.
 - **Afρ is aperture-dependent.** Always report `rho_km` alongside a value.
 - Horizons epoch lists travel in the request URL: chunk at ≤50 (75 works, 100 returns HTTP 502).
+- **Never hardcode a Horizons record number.** They are renumbered; `90001203`/`90001204` once meant 240P and now mean 233P/234P. Resolve designations via `ztfcomet.horizons` and verify `targetname`.
+- **A designation can resolve to a fragment.** `240P` lists `240P-B` too; taking the last record picks the fragment. Fragments are excluded unless `allow_fragment=True`.
+- **`sep.winpos` returns `(x, y, flag)` — three values.** Unpacking two raises and, if caught, silently disables centroiding everywhere.
+- Contamination flagging needs Gaia DR3 at `$ZTFCOMET_GAIA`; it is complete only to `G < 18.5`.
 
 ## Strict Constraints (Do NOT Do These)
 - Never introduce new third-party dependencies without asking for confirmation first.

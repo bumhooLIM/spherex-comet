@@ -53,27 +53,57 @@ def test_get_target_is_case_insensitive():
 
 def test_unknown_target_falls_through_to_horizons():
     target = zc.get_target("C/2099 Z9")
-    assert target.horizons_id == "C/2099 Z9"
+    assert target.query_designation == "C/2099 Z9"
     assert target.name == "C/2099Z9"
 
 
-def test_orbit_record_switches_at_the_apparition_boundary():
-    """240P/NEAT needs a different orbit solution either side of 2022-01-01."""
+def test_orbit_record_delegates_to_the_designation_resolver(monkeypatch):
+    """With no pinned records, resolution is dynamic and fragment-aware.
+
+    Record numbers are deliberately *not* hardcoded any more: the ones the
+    pre-merge notebooks carried for 240P now resolve to different comets.
+    """
+    from ztfcomet import horizons as hz
+
+    seen = {}
+
+    def fake(designation, epoch_jd=None, allow_fragment=False, location=None):
+        seen.update(designation=designation, epoch_jd=epoch_jd,
+                    allow_fragment=allow_fragment)
+        return 90001212
+
+    monkeypatch.setattr(hz, "resolve_target_id", fake)
     target = zc.get_target("240P")
-    assert target.resolve_orbit_record(2458500.0) == 90001203   # 2019
-    assert target.resolve_orbit_record(2460900.0) == 90001204   # 2025
+    assert target.resolve_orbit_record(2460900.0) == 90001212
+    assert seen["designation"] == "240P"
+    assert seen["allow_fragment"] is False
 
 
-def test_orbit_record_defaults_when_unconfigured():
-    target = zc.get_target("24P")
-    assert target.resolve_orbit_record(2460000.0) == 90000355
+def test_pinned_orbit_records_still_override(monkeypatch):
+    """The escape hatch works, but it is deprecated and must not hit the network."""
+    from ztfcomet import horizons as hz
+
+    def boom(*a, **k):
+        raise AssertionError("must not resolve when records are pinned")
+
+    monkeypatch.setattr(hz, "resolve_target_id", boom)
+    target = cfg.Target(name="X", designation="X",
+                        orbit_records={0.0: 111111, 2459580.5: 222222})
+    assert target.resolve_orbit_record(2458000.0) == 111111
+    assert target.resolve_orbit_record(2460900.0) == 222222
 
 
-def test_regression_c9_each_target_has_its_own_horizons_id():
+def test_regression_c9_each_target_has_its_own_designation():
     """``ztfquery_2P.ipynb`` shipped 24P's orbit ID inside the 2P notebook."""
-    ids = [t.horizons_id for t in cfg.TARGETS.values()]
-    assert len(ids) == len(set(ids)), "two targets share a Horizons id"
-    assert cfg.TARGETS["2P"].horizons_id != cfg.TARGETS["24P"].horizons_id
+    designations = [t.query_designation for t in cfg.TARGETS.values()]
+    assert len(designations) == len(set(designations)), "two targets share a designation"
+    assert cfg.TARGETS["2P"].query_designation != cfg.TARGETS["24P"].query_designation
+
+
+def test_no_target_pins_a_horizons_record_number():
+    """Record numbers are not stable; designations are."""
+    pinned = {name: t.orbit_records for name, t in cfg.TARGETS.items() if t.orbit_records}
+    assert not pinned, f"pinned record numbers will go stale: {pinned}"
 
 
 # ------------------------------------------------------------------------- query
@@ -291,6 +321,63 @@ def _synthetic_table(n=4):
         "alpha": np.full(n, 10.0),
         **{c: np.zeros(n, dtype=bool) for c in phot.FLAG_COLUMNS},
     })
+
+
+def test_sep_winpos_returns_three_values():
+    """``sep.winpos`` returns (x, y, flag), not (x, y).
+
+    Unpacking two silently raised, was swallowed by the surrounding
+    ``except``, and left every aperture on the unrefined ephemeris position —
+    a mis-centring of ~25% of the aperture radius on 79 of 111 real frames,
+    visible only as a centroid-shift histogram that was exactly zero everywhere.
+    """
+    import sep
+
+    # A single Gaussian source offset from the seed position.
+    y, x = np.mgrid[0:41, 0:41]
+    image = np.exp(-((x - 22.0) ** 2 + (y - 19.0) ** 2) / (2 * 2.0 ** 2)).astype(np.float32)
+
+    result = sep.winpos(np.ascontiguousarray(image), xinit=20.0, yinit=20.0, sig=3.0)
+    assert len(result) == 3, "sep.winpos no longer returns (x, y, flag)"
+
+    xw, yw, _flag = result
+    assert float(xw) == pytest.approx(22.0, abs=0.5)
+    assert float(yw) == pytest.approx(19.0, abs=0.5)
+
+
+def test_measure_photometry_actually_refines_the_centroid(tmp_path):
+    """End-to-end guard: the centroid must move off the ephemeris position."""
+    from astropy.io import fits
+    from astropy.wcs import WCS
+
+    ny = nx = 81
+    y, x = np.mgrid[0:ny, 0:nx]
+    # Source deliberately offset by ~3 px from the frame centre.
+    image = 1000.0 * np.exp(-((x - 43.0) ** 2 + (y - 38.0) ** 2) / (2 * 2.0 ** 2)) + 100.0
+
+    header = fits.Header({
+        "NAXIS": 2, "NAXIS1": nx, "NAXIS2": ny,
+        "CTYPE1": "RA---TAN", "CTYPE2": "DEC--TAN",
+        "CRPIX1": 41.0, "CRPIX2": 41.0, "CRVAL1": 100.0, "CRVAL2": 10.0,
+        "CD1_1": -2.8e-4, "CD1_2": 0.0, "CD2_1": 0.0, "CD2_2": 2.8e-4,
+    })
+    path = tmp_path / "frame.fits"
+    fits.writeto(path, image.astype(np.float32), header, overwrite=True)
+
+    centre = WCS(header).pixel_to_world(40.0, 40.0)
+    table = pd.DataFrame([{
+        "file": "frame.fits", "obsjd": 2460000.5, "filter": "ZTF_r",
+        "ra": centre.ra.deg, "dec": centre.dec.deg,
+        "egain": 6.2, "readnoise": 9.7, "pixscale": 1.0, "fwhm_pix": 4.7,
+        "delta": 1.0, "r": 2.0,
+    }])
+
+    out = phot.measure_photometry(table, tmp_path, cfg.PhotConfig(rho_km=1.0e6),
+                                  progress=False)
+    shift = float(out.loc[0, "centroid_shift_pix"])
+    assert shift > 0.5, f"centroid was not refined (shift={shift})"
+    assert out.loc[0, "x_center"] == pytest.approx(43.0, abs=1.0)
+    assert out.loc[0, "y_center"] == pytest.approx(38.0, abs=1.0)
 
 
 def test_regression_c1_zeropoint_is_applied_per_frame():

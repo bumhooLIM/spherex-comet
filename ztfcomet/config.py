@@ -10,7 +10,10 @@ once, here, makes that class of mistake impossible.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field, replace
+
+_log = logging.getLogger(__name__)
 
 __all__ = [
     "ZTF_OBSCODE", "IRSA_SEARCH_URL", "IRSA_DATA_URL",
@@ -109,6 +112,17 @@ class PhotConfig:
     default_color_gr : float
         Comet ``g-r`` assumed when the colour term cannot be measured from a
         same-night pair.  Typical dust-dominated comae sit near 0.5.
+    contam_flux_ratio : float
+        Flag a frame when catalogued background sources inside the aperture
+        carry at least this fraction of the comet's expected flux.  0.30 means
+        ``G_eff <= Tmag + 1.31``.
+    contam_radius_pad_fwhm : float
+        The contamination search radius is ``rho_pix + contam_radius_pad_fwhm *
+        FWHM`` pixels: a star just outside the aperture still spills flux into
+        it through the PSF wings.
+    check_contamination : bool
+        Run the Gaia check at all.  Turned off automatically when no catalogue
+        is available.
     min_rho_fwhm : float
         Quality threshold: apertures smaller than this many seeing FWHM do not
         contain the PSF, so the "rho_km aperture" is not measuring rho_km of
@@ -130,6 +144,9 @@ class PhotConfig:
     phase_beta_err: float = 0.0
     default_color_gr: float = 0.5
     min_rho_fwhm: float = 1.5
+    contam_flux_ratio: float = 0.30
+    contam_radius_pad_fwhm: float = 1.0
+    check_contamination: bool = True
     sigma_clip_sigma: float = 3.0
     sigma_clip_iters: int = 5
     winpos_sig_scale: float = 3.0
@@ -150,16 +167,28 @@ class Target:
         Identifier passed to :class:`astroquery.jplhorizons.Horizons`.  For
         periodic comets a bare designation is ambiguous across apparitions, so
         prefer the numeric orbit record (e.g. ``90001204``).
+    designation : str
+        The name to resolve against Horizons, e.g. ``"240P"``.  Defaults to
+        :attr:`name`.  Prefer this over a hardcoded record number: Horizons
+        **renumbers** its small-body records, and the numbers the pre-merge
+        notebooks carried for 240P now resolve to 233P and 234P — different
+        comets.  See :mod:`ztfcomet.horizons`.
+    allow_fragment : bool
+        Permit Horizons to return a fragment (``240P-B``).  Default ``False``:
+        asking for ``240P`` must give the parent body, and the predecessor's
+        "take the last record" rule silently selected the fragment.
     orbit_records : dict
-        Optional ``{jd_before: record_number}`` mapping for comets whose orbit
-        solution changes between apparitions.  240P/NEAT needs 90001203 before
-        2022-01-01 and 90001204 after; see :func:`resolve_orbit_record`.
+        Optional ``{jd_from: record_number}`` override for pinning specific
+        apparitions.  **Deprecated** — record numbers go stale; leave it empty
+        and let :mod:`ztfcomet.horizons` resolve per epoch.
     perihelion_jd : dict
         Optional ``{label: JD}`` times of perihelion, for ``T - T_p`` lightcurves.
     """
 
     name: str
-    horizons_id: str | int
+    horizons_id: str | int | None = None
+    designation: str | None = None
+    allow_fragment: bool = False
     start_date: str = "2025-01-01"
     end_date: str = "2025-12-31"
     orbit_records: dict[float, int] = field(default_factory=dict)
@@ -168,18 +197,34 @@ class Target:
     phot: PhotConfig = field(default_factory=PhotConfig)
     note: str = ""
 
-    def resolve_orbit_record(self, jd: float) -> str | int:
+    @property
+    def query_designation(self) -> str:
+        """Name to resolve against Horizons."""
+        return str(self.designation or self.horizons_id or self.name)
+
+    def resolve_orbit_record(self, jd: float):
         """Horizons id appropriate for an observation at *jd*.
 
-        Returns the record for the latest boundary at or below *jd*; falls back
-        to :attr:`horizons_id` when no boundaries are configured.
+        Resolves the designation dynamically (see :mod:`ztfcomet.horizons`),
+        excluding fragments unless :attr:`allow_fragment` is set and preferring
+        the orbit solution nearest the observation.
+
+        An explicit :attr:`orbit_records` entry overrides the lookup, but that
+        route is deprecated: Horizons renumbers records, so a number pinned
+        today can name a different comet next year.
         """
-        if not self.orbit_records:
-            return self.horizons_id
-        applicable = [b for b in sorted(self.orbit_records) if jd >= b]
-        if not applicable:
-            return self.orbit_records[min(self.orbit_records)]
-        return self.orbit_records[applicable[-1]]
+        if self.orbit_records:
+            applicable = [b for b in sorted(self.orbit_records) if jd >= b]
+            record = self.orbit_records[applicable[-1] if applicable
+                                        else min(self.orbit_records)]
+            _log.warning("%s: using pinned Horizons record %s. Record numbers "
+                         "are not stable — prefer designation lookup.",
+                         self.name, record)
+            return record
+
+        from . import horizons as _horizons        # late: avoids a cycle
+        return _horizons.resolve_target_id(
+            self.query_designation, epoch_jd=jd, allow_fragment=self.allow_fragment)
 
     def with_dates(self, start_date: str, end_date: str) -> "Target":
         """Copy of this target over a different date range."""
@@ -187,10 +232,15 @@ class Target:
 
 
 #: Known targets.  Add entries here rather than pasting IDs into notebooks.
+#:
+#: Note the absence of hardcoded Horizons record numbers.  The pre-merge
+#: notebooks carried ``90001203``/``90001204`` labelled "240P/NEAT"; those
+#: records today resolve to 233P/La Sagra and 234P/LINEAR.  Designations are
+#: stable, record numbers are not.
 TARGETS: dict[str, Target] = {
     "24P": Target(
         name="24P",
-        horizons_id=90000355,
+        designation="24P",
         start_date="2025-07-01",
         end_date="2025-12-31",
         query=QueryConfig(interval_days=5, rh_max=9, vmag_max=20),
@@ -198,18 +248,27 @@ TARGETS: dict[str, Target] = {
     ),
     "240P": Target(
         name="240P",
-        horizons_id=90001204,
+        designation="240P",
         start_date="2018-01-01",
         end_date="2026-06-30",
-        # 240P/NEAT: the orbit solution differs between the two apparitions
-        # covered by the archive, so the record must be chosen per epoch.
-        orbit_records={0.0: 90001203, 2459580.5: 90001204},  # 2022-01-01
+        # "240P" is ambiguous: Horizons lists two parent solutions (2014, 2024)
+        # and the fragment 240P-B. allow_fragment=False keeps the parent, and
+        # the solution nearest each observation is chosen per epoch.
+        allow_fragment=False,
         perihelion_jd={"2018": 2458256.7471537665, "2025": 2461029.353067453},
-        note="240P/NEAT.",
+        note="240P/NEAT (parent body; 240P-B is a fragment and is excluded).",
+    ),
+    "240P-B": Target(
+        name="240P-B",
+        designation="240P-B",
+        allow_fragment=True,
+        start_date="2024-01-01",
+        end_date="2026-06-30",
+        note="Fragment of 240P/NEAT. Requested explicitly, never by resolving 240P.",
     ),
     "2P": Target(
         name="2P",
-        horizons_id="2P",
+        designation="2P",
         start_date="2025-07-01",
         end_date="2026-05-31",
         query=QueryConfig(interval_days=10, rh_max=9, vmag_max=20),
@@ -217,7 +276,7 @@ TARGETS: dict[str, Target] = {
     ),
     "2019Y3": Target(
         name="2019Y3",
-        horizons_id="2019 Y3",
+        designation="2019 Y3",
         start_date="2025-01-01",
         end_date="2025-10-30",
         query=QueryConfig(interval_days=5, rh_max=10, vmag_max=20),
@@ -225,7 +284,7 @@ TARGETS: dict[str, Target] = {
     ),
     "2024E1": Target(
         name="2024E1",
-        horizons_id="2024 E1",
+        designation="2024 E1",
         start_date="2025-01-01",
         end_date="2025-10-30",
         note="C/2024 E1 (Wierzchos).",
@@ -243,5 +302,5 @@ def get_target(name: str) -> Target:
     for candidate, target in TARGETS.items():
         if candidate.lower() == key.lower():
             return target
-    return Target(name=key, horizons_id=str(name),
-                  note="Not in TARGETS; designation passed straight to Horizons.")
+    return Target(name=key, designation=str(name),
+                  note="Not in TARGETS; designation resolved against Horizons.")

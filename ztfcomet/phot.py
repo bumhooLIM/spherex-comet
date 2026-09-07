@@ -57,11 +57,12 @@ from photutils.aperture import CircularAnnulus, CircularAperture, aperture_photo
 from tqdm.auto import tqdm
 
 from . import config as cfg
+from . import horizons as hz
 from . import query as qry
 
 __all__ = [
     "build_frame_table", "attach_ephemerides", "measure_photometry",
-    "calibrate", "compute_afrho", "run_photometry",
+    "calibrate", "compute_afrho", "run_photometry", "flag_contamination",
     "FLAG_COLUMNS", "CRITICAL_FLAGS", "ADVISORY_FLAGS",
 ]
 
@@ -81,6 +82,7 @@ CRITICAL_FLAGS = [
     "flag_centroid",       # winpos moved too far from the ephemeris position
     "flag_negative_flux",  # background-subtracted sum <= 0 (mag undefined)
     "flag_lowsnr",         # SNR < 3
+    "flag_contaminated",   # catalogued background source(s) inside the aperture
 ]
 
 #: Flags that qualify a measurement without invalidating it.  Both add a small
@@ -182,6 +184,9 @@ def attach_ephemerides(table, target, progress=True):
     column_map = {
         "RA": "ra", "DEC": "dec", "r": "r", "delta": "delta", "alpha": "alpha",
         "elong": "elong", "sunTargetPA": "sunTargetPA", "velocityPA": "velocityPA",
+        # Predicted total magnitude, the reference brightness the Gaia
+        # contamination check compares against.
+        "Tmag": "tmag", "Nmag": "nmag",
     }
     for col in column_map.values():
         out[col] = np.nan
@@ -199,6 +204,19 @@ def attach_ephemerides(table, target, progress=True):
         if eph.empty:
             log.warning("No ephemeris for orbit record %s (%d epochs)", orb_id, len(idx))
             continue
+
+        # Confirm Horizons returned the object we asked for.  A record number
+        # can be stale, and an ambiguous designation can resolve to a fragment
+        # (240P -> 240P-B); "targetname" is the only place that shows up.
+        if "targetname" in eph.columns and len(eph):
+            returned = str(eph["targetname"].iloc[0])
+            ok, why = hz.verify_targetname(returned, target.query_designation,
+                                           allow_fragment=target.allow_fragment)
+            out.loc[idx, "targetname"] = returned
+            if not ok:
+                log.error("%s: %s", target.name, why)
+                raise ValueError(f"{target.name}: {why}")
+            log.info("%s: Horizons record %s -> %s", target.name, orb_id, returned)
 
         available = {src: dst for src, dst in column_map.items() if src in eph.columns}
         missing = set(column_map) - set(available)
@@ -309,6 +327,9 @@ def measure_photometry(table, datadir, phot_config=None, progress=True):
         out[col] = False
     out["flag_undersampled"] = out["rho_fwhm"] < pc.min_rho_fwhm
 
+    n_winpos_failed = 0
+    last_winpos_error = None
+
     rows = out.iterrows()
     if progress:
         rows = tqdm(rows, total=len(out), desc="Aperture photometry")
@@ -338,14 +359,19 @@ def measure_photometry(table, datadir, phot_config=None, progress=True):
         out.at[idx, "flag_outside"] = not inside_array
 
         if inside_array:
-            # sep needs a C-contiguous native-endian float32 view.
+            # sep needs a C-contiguous native-endian float32 view, and winpos
+            # returns THREE values (x, y, flag) -- unpacking only two raises,
+            # and silently falling back would disable centroiding everywhere.
             try:
-                xw, yw = sep.winpos(np.ascontiguousarray(data, dtype=np.float32),
-                                    xinit=x0, yinit=y0,
-                                    sig=pc.winpos_sig_scale * row["fwhm_pix"])
+                xw, yw, winflag = sep.winpos(
+                    np.ascontiguousarray(data, dtype=np.float32),
+                    xinit=x0, yinit=y0,
+                    sig=pc.winpos_sig_scale * row["fwhm_pix"])
                 xw, yw = float(xw), float(yw)
+                out.at[idx, "winpos_flag"] = int(np.atleast_1d(winflag)[0])
             except Exception as exc:                            # noqa: BLE001
-                log.debug("winpos failed on %s (%s); using the WCS position", row["file"], exc)
+                n_winpos_failed += 1
+                last_winpos_error = exc
                 xw, yw = x0, y0
         else:
             xw, yw = x0, y0
@@ -403,12 +429,132 @@ def measure_photometry(table, datadir, phot_config=None, progress=True):
         out.at[idx, "source_sum_err"] = source_err
         out.at[idx, "snr"] = source_sum / source_err if source_err > 0 else np.nan
 
+    if n_winpos_failed:
+        # A systematic failure means every aperture sits on the raw ephemeris
+        # position. That must never pass unnoticed.
+        level = log.error if n_winpos_failed > 0.5 * len(out) else log.warning
+        level("sep.winpos failed on %d/%d frames (%s); those apertures use the "
+              "unrefined ephemeris position", n_winpos_failed, len(out), last_winpos_error)
+
     out["flag_negative_flux"] = ~(out["source_sum"] > 0)
     out["flag_lowsnr"] = ~(out["snr"] >= 3)
 
     with np.errstate(divide="ignore", invalid="ignore"):
         out["inst_mag"] = -2.5 * np.log10(out["source_sum"].where(out["source_sum"] > 0))
         out["inst_mag_err"] = 2.5 / np.log(10) / out["snr"]
+    return out
+
+
+def flag_contamination(table, phot_config=None, catalogue=None, progress=True):
+    """Flag apertures containing catalogued background sources.
+
+    A comet drifts across the star field, so on some frames a background star
+    falls inside the photometric aperture.  The extra flux is indistinguishable
+    from cometary activity in the image alone, and reads out as a spurious
+    Af-rho spike.
+
+    For each frame this sums the Gaia DR3 flux inside the aperture into a single
+    effective magnitude
+
+    .. math:: G_\\mathrm{eff} = -2.5\\log_{10}\\sum_i 10^{-0.4 G_i}
+
+    and compares it with the comet's predicted total magnitude ``Tmag`` from the
+    JPL ephemeris.  The frame is flagged when the contaminating flux reaches
+    ``PhotConfig.contam_flux_ratio`` of the comet's — 30% by default, i.e.
+    ``G_eff <= Tmag + 1.31``.
+
+    Parameters
+    ----------
+    table : pandas.DataFrame
+        Output of :func:`measure_photometry`; needs ``ra``/``dec``, ``rho_pix``,
+        ``fwhm_pix``, ``pixscale`` and ``tmag``.
+    phot_config : ztfcomet.config.PhotConfig, optional
+    catalogue : ztfcomet.gaia.GaiaCatalog, optional
+        Defaults to the catalogue at :data:`ztfcomet.directory.GAIA_ROOT`.
+
+    Returns
+    -------
+    pandas.DataFrame
+        *table* with ``contam_radius_arcsec``, ``contam_n_sources``,
+        ``contam_g_eff``, ``contam_g_brightest``, ``contam_ratio`` and
+        ``flag_contaminated``.
+
+    Notes
+    -----
+    The search radius is the aperture **plus** ``contam_radius_pad_fwhm`` seeing
+    FWHM, because a star just outside the aperture still spills flux into it
+    through the PSF wings.
+
+    Two limits are worth stating with any result.  The catalogue is complete
+    only to ``G = 18.5``, so "uncontaminated" means "no catalogued source" —
+    fainter stars, and galaxies, are invisible to this test.  And Gaia ``G`` is
+    compared directly with a visual ``Tmag``; the passbands differ by of order
+    0.1-0.2 mag for typical stellar colours, which is small against a 30%
+    (0.28 mag) threshold but not zero.
+    """
+    from . import gaia as gaia_module
+
+    pc = phot_config or cfg.PhotConfig()
+    if table.empty:
+        return table
+
+    out = table.copy()
+    for col, value in [("contam_radius_arcsec", np.nan), ("contam_n_sources", 0),
+                       ("contam_g_eff", np.inf), ("contam_g_brightest", np.inf),
+                       ("contam_ratio", 0.0)]:
+        out[col] = value
+    if "flag_contaminated" not in out:
+        out["flag_contaminated"] = False
+
+    if not pc.check_contamination:
+        log.info("Contamination check disabled by configuration")
+        return out
+
+    catalogue = catalogue or gaia_module.GaiaCatalog()
+    if not catalogue.available:
+        log.warning("%s — every frame left unflagged for contamination",
+                    catalogue.describe())
+        return out
+    log.info(catalogue.describe())
+
+    if "tmag" not in out or out["tmag"].isna().all():
+        log.warning("No predicted magnitude (Tmag) available; "
+                    "contamination cannot be assessed")
+        return out
+
+    rows = out.iterrows()
+    if progress:
+        rows = tqdm(rows, total=len(out), desc="Gaia contamination")
+
+    for idx, row in rows:
+        if not (np.isfinite(row.get("ra", np.nan)) and np.isfinite(row.get("dec", np.nan))):
+            continue
+        rho_pix = row.get("rho_pix", np.nan)
+        fwhm_pix = row.get("fwhm_pix", np.nan)
+        pixscale = row.get("pixscale", np.nan)
+        if not np.isfinite(rho_pix) or not np.isfinite(pixscale):
+            continue
+        if not np.isfinite(fwhm_pix):
+            fwhm_pix = 0.0
+
+        radius = (rho_pix + pc.contam_radius_pad_fwhm * fwhm_pix) * pixscale
+        result = catalogue.check_aperture(
+            ra=row["ra"], dec=row["dec"], radius_arcsec=radius,
+            comet_mag=row.get("tmag", np.nan),
+            flux_ratio_threshold=pc.contam_flux_ratio,
+        )
+
+        out.at[idx, "contam_radius_arcsec"] = result.radius_arcsec
+        out.at[idx, "contam_n_sources"] = result.n_sources
+        out.at[idx, "contam_g_eff"] = result.g_eff
+        out.at[idx, "contam_g_brightest"] = result.g_brightest
+        out.at[idx, "contam_ratio"] = result.ratio
+        out.at[idx, "flag_contaminated"] = result.contaminated
+
+    n = int(out["flag_contaminated"].sum())
+    if n:
+        log.info("%d/%d frames flagged for background contamination "
+                 "(>= %.0f%% of the comet flux)", n, len(out), 100 * pc.contam_flux_ratio)
     return out
 
 
@@ -604,6 +750,7 @@ def run_photometry(target, datadir=None, phot_config=None, progress=True, save=T
     table.insert(1, "target", target.name)
     table = attach_ephemerides(table, target, progress=progress)
     table = measure_photometry(table, datadir, pc, progress=progress)
+    table = flag_contamination(table, pc, progress=progress)
     table = calibrate(table, pc)
     table = compute_afrho(table, pc)
 

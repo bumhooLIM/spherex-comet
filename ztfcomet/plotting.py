@@ -184,8 +184,15 @@ def plot_cutout(path, row=None, target=None, ax=None, show_apertures=True,
         ax.annotate("\n".join(lines), xy=(1.05, 0.95), xycoords="axes fraction",
                     fontsize=13, color="k", va="top", ha="left", family="monospace")
 
-    ax.set_xlabel("RA")
-    ax.set_ylabel("Dec")
+    # Only claim sky coordinates when the axes actually carry the WCS
+    # projection; a bare subplot shows pixels, and labelling those "RA"/"Dec"
+    # misrepresents the figure.
+    if hasattr(ax, "coords"):
+        ax.set_xlabel("RA")
+        ax.set_ylabel("Dec")
+    else:
+        ax.set_xlabel("x (pix)")
+        ax.set_ylabel("y (pix)")
     if title:
         ax.set_title(title)
     return ax

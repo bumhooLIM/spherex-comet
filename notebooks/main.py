@@ -26,6 +26,15 @@ Re-fetch over a different window with a bigger aperture::
 Stage names for ``--steps`` are ``query``, ``download``, ``phot`` and
 ``figures``; all four run by default.
 
+Quality checks include a Gaia DR3 background-source test: if catalogued stars
+inside the aperture carry >=30% of the comet's predicted flux, the frame is
+flagged as contaminated.
+
+Comet designations are resolved against Horizons per epoch and **fragments are
+excluded** — asking for 240P gives the parent body, not 240P-B. Use
+``--allow-fragment`` (or the ``240P-B`` target) when the fragment is the object
+of interest.
+
 Notes
 -----
 Frames failing a quality check are **flagged, not dropped** (see
@@ -75,6 +84,14 @@ def parse_args(argv=None):
                         help="skip the CLRCOEFF colour correction")
     parser.add_argument("--no-aperture-correction", action="store_true",
                         help="skip the APCOR aperture correction")
+    parser.add_argument("--no-contamination", action="store_true",
+                        help="skip the Gaia background-source check")
+    parser.add_argument("--contam-ratio", type=float,
+                        help="flag when background flux reaches this fraction of "
+                             "the comet's (default 0.30)")
+    parser.add_argument("--allow-fragment", action="store_true",
+                        help="permit Horizons to return a fragment (e.g. 240P-B) "
+                             "instead of the parent comet")
     parser.add_argument("--only-good", action="store_true",
                         help="plot only unflagged frames (the saved table always keeps everything)")
     parser.add_argument("--no-figures", action="store_true", help="shorthand for dropping the figures step")
@@ -104,6 +121,8 @@ def build_target(name, args):
             "rho_km": args.rho_km,
             "apply_color_term": False if args.no_color_term else None,
             "apply_aperture_correction": False if args.no_aperture_correction else None,
+            "check_contamination": False if args.no_contamination else None,
+            "contam_flux_ratio": args.contam_ratio,
         }.items() if v is not None
     }
 
@@ -116,6 +135,8 @@ def build_target(name, args):
         changes["start_date"] = args.start
     if args.end:
         changes["end_date"] = args.end
+    if args.allow_fragment:
+        changes["allow_fragment"] = True
     return dataclasses.replace(target, **changes) if changes else target
 
 
@@ -125,7 +146,9 @@ def run_target(target, steps, args):
     figdir = zc.fig_dir(target.name)
 
     print(f"\n{'=' * 72}\n{target.name}   {target.start_date} .. {target.end_date}"
-          f"\n  data : {datadir}\n{'=' * 72}")
+          f"\n  designation : {target.query_designation}"
+          f"{'  [fragments allowed]' if target.allow_fragment else ''}"
+          f"\n  data        : {datadir}\n{'=' * 72}")
 
     urls = None
     if "query" in steps:
@@ -187,6 +210,11 @@ def summarise(target, table):
     if flagged:
         print(f"  flags          : {flagged}")
         print("                   (flagged rows are kept in the table, not dropped)")
+
+    if "contam_n_sources" in table and table["flag_contaminated"].any():
+        hit = table[table["flag_contaminated"]]
+        print(f"  contamination  : {len(hit)} frame(s) with Gaia sources in the aperture; "
+              f"flux ratio {hit.contam_ratio.min():.2f}-{hit.contam_ratio.max():.2f}")
 
     good = table[table["quality_ok"]] if "quality_ok" in table else table
     if not good.empty and good["afrho0_cm"].notna().any():

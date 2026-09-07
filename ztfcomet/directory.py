@@ -32,12 +32,17 @@ from pathlib import Path
 
 __all__ = [
     "PROJECT_ROOT", "DATA_ROOT", "RESULT_ROOT", "FIG_ROOT", "DOC_ROOT",
-    "SSD_DATA_ROOT", "target_slug", "data_dir", "result_dir", "fig_dir",
-    "describe",
+    "SSD_DATA_ROOT", "GAIA_ROOT", "target_slug", "data_dir", "result_dir",
+    "fig_dir", "describe",
 ]
 
 #: Where raw FITS live when the external SSD is mounted.
 SSD_DATA_ROOT = Path("/Volumes/T7/data/ztf-comet")
+
+#: Default home of the local Gaia DR3 catalogue used for contamination
+#: flagging.  Override with ``$ZTFCOMET_GAIA``.  Holds ``gaiadr3_all.npy`` and,
+#: ideally, the ``gaiadr3_deccache/`` fast path.
+DEFAULT_GAIA_ROOT = Path.home() / "Desktop" / "data" / "gaia_dr3"
 
 _MARKER = "pyproject.toml"
 
@@ -78,6 +83,15 @@ FIG_ROOT: Path = PROJECT_ROOT / "fig"
 
 #: Technical guidebooks and review documents.  Committed.
 DOC_ROOT: Path = PROJECT_ROOT / "doc"
+
+
+def _resolve_gaia_root() -> Path:
+    env = os.environ.get("ZTFCOMET_GAIA")
+    return Path(env).expanduser() if env else DEFAULT_GAIA_ROOT
+
+
+#: Local Gaia DR3 catalogue.  Large and read-only; never inside the repository.
+GAIA_ROOT: Path = _resolve_gaia_root()
 
 
 def target_slug(targetname: str) -> str:
@@ -126,4 +140,6 @@ def describe() -> str:
         f"RESULT_ROOT  : {RESULT_ROOT}",
         f"FIG_ROOT     : {FIG_ROOT}",
         f"DOC_ROOT     : {DOC_ROOT}",
+        f"GAIA_ROOT    : {GAIA_ROOT}"
+        f"{'' if GAIA_ROOT.is_dir() else '   (MISSING — contamination flagging disabled)'}",
     ])

@@ -39,3 +39,6 @@ fig/*
 
 # pytest
 .pytest_cache/
+
+# Office lock/temp files
+~$*

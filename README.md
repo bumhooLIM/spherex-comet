@@ -26,6 +26,12 @@ Raw FITS are **not** stored in the repository. Paths resolve in this order:
 2. the external SSD at `/Volumes/T7/data/ztf-comet` when mounted,
 3. `<project>/data` otherwise.
 
+The Gaia DR3 catalogue used for contamination flagging resolves from
+`$ZTFCOMET_GAIA`, defaulting to `~/Desktop/data/gaia_dr3`. It needs
+`gaiadr3_all.npy`; the `gaiadr3_deccache/` sibling (sorted by declination) turns
+a cone search from a full 11 GB scan into a 3–6 ms lookup and is used
+automatically when present. `GaiaCatalog.build_dec_cache()` creates it.
+
 ```python
 from ztfcomet import directory
 print(directory.describe())
@@ -73,6 +79,8 @@ ztfcomet/            the package
 ├── query.py         JPL Horizons ephemerides + IRSA image search
 ├── cutout.py        URL construction + validated download
 ├── phot.py          aperture photometry, calibration, Afrho
+├── gaia.py          Gaia DR3 cone search + contamination test
+├── horizons.py      designation -> orbit record, fragment-aware
 ├── plotting.py      annotated cutouts, Afrho lightcurves
 └── rcparams.py      shared matplotlib style
 
@@ -115,6 +123,22 @@ filter_mag = inst_mag + MAGZP + CLRCOEFF·(g−r) + APCOR(ρ)
 with uncertainties propagated from photon noise, `MAGZPRMS`, `CLRCOUNC` and
 `ZPCLRCOV`.
 
+**Contamination** — a comet drifts across the star field, so on some frames a
+background star lands inside the aperture and inflates Afρ in a way the image
+alone cannot distinguish from activity. Every catalogued Gaia DR3 source within
+`rho_pix + FWHM` is summed into one effective magnitude
+
+$$G_\mathrm{eff} = -2.5\log_{10}\sum_i 10^{-0.4G_i}$$
+
+and compared with the comet's predicted `Tmag` from JPL. The frame is flagged
+when the background carries ≥30% of the comet's flux ($G_\mathrm{eff} \le
+T_\mathrm{mag} + 1.31$). On the C/2024 E1 sample this flags 5 of 111 frames —
+and 5 of the 6 highest Afρ points.
+
+> The catalogue is complete only to `G = 18.5`, so "uncontaminated" means "no
+> *catalogued* source". Gaia `G` is also compared directly with a visual `Tmag`;
+> the passbands differ by ~0.1–0.2 mag, small against a 0.28 mag threshold.
+
 **Afρ** — A'Hearn et al. (1984):
 
 $$Af\rho = \frac{4\Delta^2 r_h^2}{\rho}\,10^{-0.4(m_c-m_\odot)},\qquad
@@ -140,6 +164,7 @@ the reason attached, in a `flags` column plus one boolean per check.
 | `centroid` | `winpos` moved too far from the ephemeris position |
 | `negative_flux` | background-subtracted sum ≤ 0 |
 | `lowsnr` | SNR < 3 |
+| `contaminated` | catalogued background source(s) inside the aperture |
 | `color_default` | *(advisory)* colour assumed, not measured |
 | `nan_pixels` | *(advisory)* negative pixels clipped in the variance model |
 
@@ -153,6 +178,34 @@ Plots draw flagged points as open symbols instead of hiding them; pass
 
 ---
 
+## Target resolution: fragments and stale records
+
+Two traps sit between a designation and the right ephemeris, and both silently
+return the **wrong object**.
+
+**Fragments share the parent's designation.** Asking Horizons for `240P` returns
+an ambiguity listing containing two parent solutions *and* `240P-B`, a fragment
+about 2.9 mag fainter. Taking the last record — the obvious rule, and the one
+the predecessor used — selects the fragment.
+
+**Record numbers are not stable.** Horizons renumbers its small-body records.
+The numbers the pre-merge notebooks hardcoded for 240P (`90001203`, `90001204`)
+today resolve to **233P/La Sagra** and **234P/LINEAR**.
+
+`ztfcomet.horizons` therefore resolves by designation, drops fragments, picks
+the orbit solution nearest the observation, and verifies `targetname` on the way
+back. For 240P the two parent solutions differ by ~50 arcsec in 2025 — more than
+the aperture — so the epoch choice is not cosmetic:
+
+```python
+zc.get_target("240P").resolve_orbit_record(2458300.5)   # 2018 obs -> 90001211
+zc.get_target("240P").resolve_orbit_record(2460900.5)   # 2025 obs -> 90001212
+zc.get_target("240P-B").resolve_orbit_record(2460900.5) # the fragment, explicitly
+```
+
+Pass `--allow-fragment` (or use the `240P-B` target) when the fragment really is
+the object of interest.
+
 ## Adding a target
 
 Edit `ztfcomet/config.py` rather than pasting constants into a notebook — that
@@ -162,7 +215,7 @@ ephemeris.
 ```python
 "81P": Target(
     name="81P",
-    horizons_id=90000664,
+    designation="81P",          # never a record number: they get renumbered
     start_date="2025-01-01",
     end_date="2025-12-31",
     perihelion_jd={"2028": 2461800.5},
@@ -170,8 +223,8 @@ ephemeris.
 ),
 ```
 
-An unknown name still works — `get_target` passes it straight to Horizons — but
-the record number is what disambiguates apparitions for periodic comets.
+An unknown name still works — `get_target` resolves it against Horizons — but an
+entry here is what makes the choice reviewable.
 
 ---
 

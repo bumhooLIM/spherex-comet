@@ -553,3 +553,107 @@ output, or discards history. They are listed for explicit sign-off.
 | D9 | `rho_km` fixed at 15000, or per-target in `config.py`? | Per-target in config, defaulting to 15000. |
 | D10 | Propagate uncertainties to Afρ (C8)? | Yes — `MAGZPRMS` + photon noise at minimum. |
 
+
+---
+
+## 6. Addendum — post-merge findings (2026-09-07)
+
+Three defects found *after* the merge, while adding background-source
+contamination flagging and fragment-safe target resolution. All are fixed and
+carry regression tests; they are recorded here because each was silent.
+
+### C23. `sep.winpos` returns three values, so centroiding never ran
+
+`sep.winpos` returns `(x, y, flag)`. The merged `phot.measure_photometry`
+unpacked two:
+
+```python
+xw, yw = sep.winpos(...)          # ValueError, every frame
+```
+
+The `ValueError` was caught by the surrounding `except Exception`, which fell
+back to the unrefined WCS position. Centroid refinement was therefore **disabled
+on every frame**, and the only visible symptom was a `centroid_shift_pix`
+histogram that was exactly zero everywhere — easy to read as "the ephemeris is
+excellent" rather than "the code never ran".
+
+Measured on the 111-frame C/2024 E1 sample once fixed:
+
+| | value |
+|---|---|
+| median centroid shift | 1.51 px (1.53″) |
+| 90th percentile | 2.72 px |
+| frames shifted > 1 px | 79 / 111 |
+| shift as a fraction of aperture radius | ~25% |
+
+A quarter of the aperture radius is not a rounding error: it moves flux out of
+the aperture and sky into it.
+
+**Lesson.** A bare `except` around a library call turns an API mismatch into a
+silent no-op. The fallback path must be counted and reported, not merely taken —
+`measure_photometry` now escalates to `log.error` when more than half the frames
+fail to centroid.
+
+### C24. Horizons record numbers are not stable
+
+The pre-merge notebooks hardcoded `90001203` and `90001204`, both labelled
+"240P/NEAT", and those numbers were carried into `config.py` during the merge.
+Queried today:
+
+| record | resolves to |
+|---|---|
+| 90001203 | **233P/La Sagra** |
+| 90001204 | **234P/LINEAR** |
+| 90001211 | 240P/NEAT (2014 solution) |
+| 90001212 | 240P/NEAT (2024 solution) |
+| 90001213 | 240P-B/NEAT (fragment) |
+
+JPL renumbers its small-body records, so a pinned number is a cache key with no
+expiry check. Any 240P reduction run with the old notebooks may be of a
+different comet entirely.
+
+**Fix.** `Target` now carries a *designation*; `ztfcomet.horizons` resolves it
+per epoch and `verify_targetname` checks what came back. `orbit_records` remains
+as an override but warns.
+
+### C25. An ambiguous designation resolves to a fragment
+
+Horizons answers `240P` with three candidates — two parent orbit solutions and
+the fragment `240P-B`. The predecessor's `extract_lastrecnum` took the **last**
+row, which is the fragment: 2.9 mag fainter than the parent and a different
+object.
+
+`select_record` now drops fragments unless `allow_fragment=True`, restricts
+candidates to the requested parent designation, and prefers the orbit solution
+nearest the observation. That last part is not cosmetic — 240P's two parent
+solutions differ by ~50 arcsec in 2025, several times the aperture radius, so
+the wrong one would put the aperture on empty sky.
+
+### Also fixed
+
+- **Broken notebooks passed validation.** The three notebooks were written with
+  `source` lists built by `split("\n")`, which drops the newlines; Jupyter joins
+  the list with `""`, so every cell collapsed to one unusable line.
+  `nbformat.validate()` checks schema only and reported them valid. All three
+  now execute clean under `nbconvert --execute`, which is the check that
+  actually means something.
+- **Mislabelled figure axes.** `plot_cutout` labelled axes "RA"/"Dec"
+  unconditionally, including on subplots created without a WCS projection, which
+  show pixels. It now labels by projection.
+
+### C26. Contamination flagging (new capability, not a defect)
+
+Background stars inside the aperture inflate Afρ indistinguishably from
+activity. `phot.flag_contamination` sums Gaia DR3 sources within
+`rho_pix + FWHM` into `G_eff = -2.5 log₁₀ Σ 10^(-0.4 Gᵢ)` and flags the frame at
+≥30% of the comet's predicted `Tmag` flux.
+
+On C/2024 E1 it flags 5 of 111 frames — and **5 of the 6 highest Afρ points**.
+Contaminated frames have median A(0)fρ = 1365 cm against 654 cm for clean ones.
+The sixth high point is separately flagged as an edge-truncated cutout, so every
+outlier in the lightcurve is now accounted for.
+
+Two limits belong with any result: the catalogue stops at `G = 18.5`, so
+"uncontaminated" means "no *catalogued* source"; and Gaia `G` is compared
+directly with a visual `Tmag`, a ~0.1–0.2 mag mismatch against a 0.28 mag
+threshold.

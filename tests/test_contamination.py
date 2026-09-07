@@ -1,0 +1,326 @@
+"""Tests for Gaia contamination flagging and Horizons fragment handling.
+
+Offline: the Gaia tests build a small synthetic catalogue on disk in the same
+layout as the real declination-sorted cache, and the Horizons tests parse a
+captured ambiguity listing rather than calling the service.
+"""
+
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from ztfcomet import config as cfg
+from ztfcomet import gaia, horizons, phot
+
+# The real listing Horizons returns for "240P", captured 2026-09.
+AMBIGUITY_240P = """Ambiguous target name; provide unique id:
+    Record #  Epoch-yr  >MATCH DESIG<  Primary Desig  Name
+    --------  --------  -------------  -------------  -------------------------
+    90001211    2014    240P           240P            NEAT
+    90001212    2024    240P           240P            NEAT
+    90001213    2025    240P-B         240P-B          NEAT"""
+
+
+# ====================================================================== Gaia
+def test_effective_magnitude_matches_the_specified_example():
+    """Two G=15 sources combine to G_eff ~ 14.25."""
+    assert gaia.effective_magnitude([15.0, 15.0]) == pytest.approx(14.2474, abs=1e-4)
+
+
+def test_effective_magnitude_of_a_single_source_is_itself():
+    assert gaia.effective_magnitude([16.3]) == pytest.approx(16.3)
+
+
+def test_effective_magnitude_of_nothing_is_infinitely_faint():
+    assert gaia.effective_magnitude([]) == np.inf
+    assert gaia.effective_magnitude([np.nan]) == np.inf
+
+
+def test_effective_magnitude_is_dominated_by_the_brightest_source():
+    bright_only = gaia.effective_magnitude([12.0])
+    with_faint = gaia.effective_magnitude([12.0, 18.0, 18.4])
+    assert with_faint < bright_only                     # brighter (smaller mag)
+    assert with_faint == pytest.approx(bright_only, abs=0.02)
+
+
+@pytest.mark.parametrize("contaminant,comet,expected", [
+    (15.0, 15.0, 1.0),          # equal flux
+    (16.31, 15.0, 0.30),        # the 30% threshold, +1.31 mag
+    (np.inf, 15.0, 0.0),        # nothing there
+])
+def test_flux_ratio(contaminant, comet, expected):
+    assert gaia.flux_ratio(contaminant, comet) == pytest.approx(expected, abs=0.005)
+
+
+def test_thirty_percent_threshold_is_1_31_magnitudes():
+    """The stated criterion in magnitude terms, so the constant is pinned."""
+    assert -2.5 * np.log10(0.30) == pytest.approx(1.3072, abs=1e-4)
+
+
+def _write_catalogue(tmp_path, ra, dec, gmag):
+    """Build a synthetic dec-sorted cache in the real on-disk layout."""
+    cache = tmp_path / "gaiadr3_deccache"
+    cache.mkdir(parents=True, exist_ok=True)
+    order = np.argsort(dec)
+    np.save(cache / "ra.npy", np.asarray(ra, float)[order])
+    np.save(cache / "dec.npy", np.asarray(dec, float)[order])
+    np.save(cache / "gmag.npy", np.asarray(gmag, np.float32)[order])
+    (cache / "meta.json").write_text(json.dumps(
+        {"sorted_by": "dec", "n_rows": len(ra)}))
+    return gaia.GaiaCatalog(path=tmp_path)
+
+
+def test_cone_search_finds_only_sources_inside_the_radius(tmp_path):
+    # 0.005 deg = 18", 0.02 deg = 72"
+    cat = _write_catalogue(tmp_path,
+                           ra=[100.0, 100.0, 100.0, 200.0],
+                           dec=[10.0, 10.005, 10.02, -30.0],
+                           gmag=[15.0, 16.0, 12.0, 11.0])
+    assert cat.has_cache and cat.available
+
+    gmag, sep = cat.cone_search(100.0, 10.0, radius_arcsec=30.0)
+    assert sorted(np.round(gmag, 1)) == [15.0, 16.0]     # the 0.02 deg one is out
+    assert sep.max() < 30.0
+
+
+def test_cone_search_returns_sources_brightest_first(tmp_path):
+    cat = _write_catalogue(tmp_path, ra=[50.0] * 3, dec=[5.0, 5.001, 5.002],
+                           gmag=[17.0, 13.0, 15.0])
+    gmag, _ = cat.cone_search(50.0, 5.0, radius_arcsec=60.0)
+    assert list(np.round(gmag, 1)) == [13.0, 15.0, 17.0]
+
+
+def test_cone_search_handles_the_ra_wrap_at_zero(tmp_path):
+    """A cone at RA=0 must find sources at RA=359.99."""
+    cat = _write_catalogue(tmp_path, ra=[359.995, 0.005], dec=[0.0, 0.0],
+                           gmag=[14.0, 15.0])
+    gmag, _ = cat.cone_search(0.0, 0.0, radius_arcsec=60.0)
+    assert len(gmag) == 2
+
+
+def test_cone_search_near_the_pole_does_not_explode(tmp_path):
+    """cos(dec) -> 0 at the pole; the flat-sky RA window must be guarded."""
+    cat = _write_catalogue(tmp_path, ra=[0.0, 180.0], dec=[89.999, 89.999],
+                           gmag=[14.0, 15.0])
+    gmag, sep = cat.cone_search(0.0, 89.999, radius_arcsec=30.0)
+    assert np.all(np.isfinite(sep))
+    assert len(gmag) <= 2                                # never raises
+
+
+def test_cone_search_respects_a_magnitude_limit(tmp_path):
+    cat = _write_catalogue(tmp_path, ra=[50.0] * 2, dec=[5.0, 5.001],
+                           gmag=[14.0, 18.2])
+    gmag, _ = cat.cone_search(50.0, 5.0, radius_arcsec=60.0, mag_limit=17.0)
+    assert list(np.round(gmag, 1)) == [14.0]
+
+
+def test_missing_catalogue_is_reported_not_raised(tmp_path):
+    cat = gaia.GaiaCatalog(path=tmp_path / "nothing_here")
+    assert not cat.available
+    assert "NOT FOUND" in cat.describe()
+    gmag, sep = cat.cone_search(10.0, 10.0, 30.0)
+    assert len(gmag) == 0 and len(sep) == 0
+
+
+def test_check_aperture_flags_a_bright_intruder(tmp_path):
+    cat = _write_catalogue(tmp_path, ra=[100.0], dec=[10.0], gmag=[15.0])
+    result = cat.check_aperture(100.0, 10.0, radius_arcsec=30.0, comet_mag=17.0)
+
+    assert result.n_sources == 1
+    assert result.g_eff == pytest.approx(15.0)
+    assert result.ratio == pytest.approx(10 ** (0.4 * 2.0), rel=1e-6)   # ~6.3x
+    assert result.contaminated
+
+
+def test_check_aperture_passes_a_clean_field(tmp_path):
+    """A source 100x fainter than the comet is 1%, well under the threshold."""
+    cat = _write_catalogue(tmp_path, ra=[100.0], dec=[10.0], gmag=[20.0])
+    result = cat.check_aperture(100.0, 10.0, radius_arcsec=30.0, comet_mag=15.0)
+    assert not result.contaminated
+    assert result.ratio < 0.30
+
+
+def test_check_aperture_sits_exactly_on_the_threshold(tmp_path):
+    """G_eff = comet + 1.31 is the 30% boundary; just brighter must flag."""
+    cat = _write_catalogue(tmp_path, ra=[100.0], dec=[10.0], gmag=[16.25])
+    assert cat.check_aperture(100.0, 10.0, 30.0, comet_mag=15.0).contaminated
+
+    cat2 = _write_catalogue(tmp_path / "b", ra=[100.0], dec=[10.0], gmag=[16.40])
+    assert not cat2.check_aperture(100.0, 10.0, 30.0, comet_mag=15.0).contaminated
+
+
+def test_two_faint_sources_can_together_exceed_the_threshold(tmp_path):
+    """The criterion is on combined flux, not the brightest source alone."""
+    cat = _write_catalogue(tmp_path, ra=[100.0, 100.0], dec=[10.0, 10.001],
+                           gmag=[16.9, 16.9])
+    result = cat.check_aperture(100.0, 10.0, radius_arcsec=30.0, comet_mag=15.0)
+
+    assert gaia.flux_ratio(16.9, 15.0) < 0.30            # neither alone
+    assert result.g_eff == pytest.approx(16.9 - 0.7526, abs=1e-3)
+    assert result.contaminated                            # but together they do
+
+
+# ------------------------------------------------------- integration with phot
+def _phot_table(n=3):
+    return pd.DataFrame({
+        "obsjd": 2460000.5 + np.arange(n),
+        "file": [f"f{i}.fits" for i in range(n)],
+        "filter": ["ZTF_r"] * n,
+        "ra": np.full(n, 100.0), "dec": [10.0, 40.0, 70.0],
+        "rho_pix": np.full(n, 5.0), "fwhm_pix": np.full(n, 3.0),
+        "pixscale": np.full(n, 1.0), "tmag": np.full(n, 17.0),
+    })
+
+
+def test_flag_contamination_marks_only_the_affected_frame(tmp_path):
+    # A bright star sits at the first frame's position only.
+    cat = _write_catalogue(tmp_path, ra=[100.0], dec=[10.0], gmag=[14.0])
+    out = phot.flag_contamination(_phot_table(), cfg.PhotConfig(), catalogue=cat,
+                                  progress=False)
+
+    assert out["flag_contaminated"].tolist() == [True, False, False]
+    assert out.loc[0, "contam_n_sources"] == 1
+    assert out.loc[1, "contam_ratio"] == 0.0
+    assert len(out) == 3, "contamination flagging must not drop rows"
+
+
+def test_contamination_radius_includes_the_seeing_pad(tmp_path):
+    """radius = (rho_pix + pad*FWHM) * pixscale, so PSF wings are covered."""
+    cat = _write_catalogue(tmp_path, ra=[100.0], dec=[10.0], gmag=[14.0])
+    out = phot.flag_contamination(_phot_table(), cfg.PhotConfig(contam_radius_pad_fwhm=1.0),
+                                  catalogue=cat, progress=False)
+    assert out.loc[0, "contam_radius_arcsec"] == pytest.approx(8.0)   # (5+1*3)*1.0
+
+    out2 = phot.flag_contamination(_phot_table(), cfg.PhotConfig(contam_radius_pad_fwhm=0.0),
+                                   catalogue=cat, progress=False)
+    assert out2.loc[0, "contam_radius_arcsec"] == pytest.approx(5.0)
+
+
+def test_contamination_can_be_switched_off(tmp_path):
+    cat = _write_catalogue(tmp_path, ra=[100.0], dec=[10.0], gmag=[10.0])
+    out = phot.flag_contamination(_phot_table(), cfg.PhotConfig(check_contamination=False),
+                                  catalogue=cat, progress=False)
+    assert not out["flag_contaminated"].any()
+
+
+def test_contamination_without_a_catalogue_leaves_frames_unflagged(tmp_path):
+    cat = gaia.GaiaCatalog(path=tmp_path / "absent")
+    out = phot.flag_contamination(_phot_table(), cfg.PhotConfig(), catalogue=cat,
+                                  progress=False)
+    assert not out["flag_contaminated"].any()
+    assert len(out) == 3
+
+
+def test_contamination_is_a_critical_flag():
+    """A star in the aperture invalidates the measurement, so it must gate quality_ok."""
+    assert "flag_contaminated" in phot.CRITICAL_FLAGS
+    assert "flag_contaminated" not in phot.ADVISORY_FLAGS
+
+
+# ================================================================== Horizons
+def test_parse_the_real_240p_ambiguity_listing():
+    records = horizons.parse_ambiguity_table(AMBIGUITY_240P)
+    assert [r.record for r in records] == [90001211, 90001212, 90001213]
+    assert [r.epoch_yr for r in records] == [2014, 2024, 2025]
+    assert [r.is_fragment for r in records] == [False, False, True]
+    assert all(r.name == "NEAT" for r in records)
+
+
+def test_parse_returns_nothing_for_a_non_ambiguity_error():
+    assert horizons.parse_ambiguity_table("Unable to connect to Horizons") == []
+
+
+@pytest.mark.parametrize("designation,expected", [
+    ("240P-B", True), ("73P-C", True), ("73P-BB", True), ("C/2019 Y4-A", True),
+    ("240P", False), ("73P", False), ("C/2024 E1", False), ("2P", False),
+])
+def test_fragment_designation_detection(designation, expected):
+    assert horizons.is_fragment_designation(designation) is expected
+
+
+@pytest.mark.parametrize("designation,parent,letter", [
+    ("240P-B", "240P", "B"), ("73P-BB", "73P", "BB"), ("240P", "240P", None),
+])
+def test_split_designation(designation, parent, letter):
+    assert horizons.split_designation(designation) == (parent, letter)
+
+
+def test_regression_240p_resolves_to_the_parent_not_the_fragment():
+    """THE bug: 'take the last record' selected 240P-B, a fragment.
+
+    240P-B is ~2.9 mag fainter than the parent, so the whole reduction would
+    have been of the wrong object.
+    """
+    records = horizons.parse_ambiguity_table(AMBIGUITY_240P)
+    chosen = horizons.select_record(records, epoch_jd=2460900.5, designation="240P")
+
+    assert chosen.record != 90001213, "selected the fragment 240P-B"
+    assert not chosen.is_fragment
+    assert chosen.primary_desig == "240P"
+
+
+def test_orbit_solution_nearest_the_observation_is_preferred():
+    """The two parent solutions differ by ~50 arcsec in 2025, so epoch matters."""
+    records = horizons.parse_ambiguity_table(AMBIGUITY_240P)
+
+    # 2018-06 -> the 2014 solution; 2025-09 -> the 2024 solution
+    assert horizons.select_record(records, epoch_jd=2458300.5,
+                                  designation="240P").record == 90001211
+    assert horizons.select_record(records, epoch_jd=2460900.5,
+                                  designation="240P").record == 90001212
+
+
+def test_fragment_is_selectable_when_explicitly_requested():
+    records = horizons.parse_ambiguity_table(AMBIGUITY_240P)
+    chosen = horizons.select_record(records, epoch_jd=2460900.5,
+                                    designation="240P-B", allow_fragment=True)
+    assert chosen.record == 90001213 and chosen.is_fragment
+
+
+def test_designation_filter_excludes_unrelated_records():
+    records = horizons.parse_ambiguity_table(AMBIGUITY_240P) + [
+        horizons.HorizonsRecord(90009999, 2024, "241P", "241P", "OTHER")]
+    chosen = horizons.select_record(records, epoch_jd=2460900.5, designation="240P")
+    assert chosen.primary_desig == "240P"
+
+
+@pytest.mark.parametrize("returned,requested,ok", [
+    ("240P/NEAT", "240P", True),
+    ("240P-B/NEAT", "240P", False),      # the fragment substitution
+    ("234P/LINEAR", "240P", False),      # a stale record number
+    ("233P/La Sagra", "240P", False),
+])
+def test_verify_targetname_catches_wrong_objects(returned, requested, ok):
+    assert horizons.verify_targetname(returned, requested)[0] is ok
+
+
+def test_verify_targetname_accepts_a_deliberately_requested_fragment():
+    assert horizons.verify_targetname("240P-B/NEAT", "240P-B")[0] is True
+    assert horizons.verify_targetname("240P-B/NEAT", "240P", allow_fragment=True)[0] is True
+
+
+def test_explicit_record_numbers_pass_through_unchanged():
+    assert horizons.resolve_record(90001212) is None
+    assert horizons.resolve_target_id(90001212) == 90001212
+
+
+def test_config_240p_uses_a_designation_not_a_stale_record():
+    """90001203/90001204 now resolve to 233P and 234P — different comets."""
+    target = cfg.get_target("240P")
+    assert target.query_designation == "240P"
+    assert not target.allow_fragment
+    assert not target.orbit_records, "pinned record numbers go stale"
+
+
+def test_config_exposes_the_fragment_as_its_own_target():
+    fragment = cfg.get_target("240P-B")
+    assert fragment.allow_fragment
+    assert horizons.is_fragment_designation(fragment.query_designation)
