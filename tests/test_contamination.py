@@ -431,3 +431,133 @@ def test_ambiguity_fallback_inside_query_is_fragment_aware(monkeypatch):
 
     assert 90001213 not in tried, "retried with the fragment 240P-B"
     assert 90001212 in tried or 90001211 in tried
+
+
+def test_transient_horizons_valueerror_is_retried_not_fatal(monkeypatch):
+    """astroquery raises ValueError for a service failure as well as ambiguity.
+
+    Only the ambiguous case carries a candidate listing. Treating the other as
+    "no such object" silently dropped 4 of 65 epochs in a real 24P run, logged
+    as "No valid Horizons record for 90000356".
+    """
+    from ztfcomet import query as qmod
+
+    calls = {"n": 0}
+
+    class Flaky:
+        def __init__(self, id=None, id_type=None, location=None, epochs=None):
+            self._n = len(epochs)
+        def ephemerides(self, **k):
+            calls["n"] += 1
+            if calls["n"] < 3:
+                raise ValueError("Query failed without known error message; "
+                                 "received the following response:\n<html>")
+            class T:
+                def __init__(self, n): self._n = n
+                def to_pandas(self):
+                    return pd.DataFrame({"datetime_jd": np.arange(self._n)})
+            return T(self._n)
+
+    monkeypatch.setattr(qmod, "Horizons", Flaky)
+    out = qmod.query_sso_ephemeris(90000356, epochs=[2460900.5], backoff=0.0)
+
+    assert calls["n"] == 3, "did not retry a transient failure"
+    assert not out.empty, "gave up on a recoverable error"
+
+
+def test_unparsable_valueerror_does_not_abort_other_chunks(monkeypatch):
+    """One bad chunk must not discard the chunks that succeeded."""
+    from ztfcomet import query as qmod
+
+    seen = {"n": 0}
+
+    class Fake:
+        def __init__(self, id=None, id_type=None, location=None, epochs=None):
+            self._n = len(epochs)
+        def ephemerides(self, **k):
+            seen["n"] += 1
+            if seen["n"] <= 3:          # first chunk fails all 3 attempts
+                raise ValueError("Query failed without known error message")
+            class T:
+                def __init__(self, n): self._n = n
+                def to_pandas(self):
+                    return pd.DataFrame({"datetime_jd": np.arange(self._n)})
+            return T(self._n)
+
+    monkeypatch.setattr(qmod, "Horizons", Fake)
+    out = qmod.query_sso_ephemeris(90000356, epochs=list(range(100)),
+                                   max_epochs_per_call=50, backoff=0.0)
+    assert len(out) == 50, "surviving chunk was discarded with the failing one"
+
+
+def test_regression_all_identical_epochs_are_deduplicated(monkeypatch):
+    """Horizons rejects a TLIST whose entries are ALL identical.
+
+    It answers "Bad dates -- start must be earlier than stop", which is what
+    happens when one IRSA step returns several frames from a single exposure
+    (the comet landing on two CCD quadrants of the same image). That killed
+    4 of 65 steps in a real 24P run.
+    """
+    from ztfcomet import query as qmod
+
+    sent = []
+
+    class Fake:
+        def __init__(self, id=None, id_type=None, location=None, epochs=None):
+            sent.append(list(epochs))
+            self._n = len(epochs)
+        def ephemerides(self, **k):
+            if len(set(sent[-1])) == 1 and len(sent[-1]) > 1:
+                raise ValueError("Bad dates -- start must be earlier than stop")
+            class T:
+                def __init__(self, n): self._n = n
+                def to_pandas(self):
+                    return pd.DataFrame({"datetime_jd": np.arange(self._n)})
+            return T(self._n)
+
+    monkeypatch.setattr(qmod, "Horizons", Fake)
+    out = qmod.query_sso_ephemeris(90000356, epochs=[2460900.5] * 3, backoff=0.0)
+
+    assert sent[0] == [2460900.5], "duplicate epochs were sent to Horizons"
+    assert len(out) == 1
+
+
+def test_epoch_deduplication_preserves_distinct_values(monkeypatch):
+    from ztfcomet import query as qmod
+
+    sent = []
+
+    class Fake:
+        def __init__(self, id=None, id_type=None, location=None, epochs=None):
+            sent.append(list(epochs)); self._n = len(epochs)
+        def ephemerides(self, **k):
+            class T:
+                def __init__(self, n): self._n = n
+                def to_pandas(self):
+                    return pd.DataFrame({"datetime_jd": np.arange(self._n)})
+            return T(self._n)
+
+    monkeypatch.setattr(qmod, "Horizons", Fake)
+    qmod.query_sso_ephemeris(1, epochs=[2460901.5, 2460900.5, 2460900.5])
+    assert sent[0] == [2460900.5, 2460901.5], "dedup lost a distinct epoch or the sort"
+
+
+def test_non_finite_epochs_are_dropped(monkeypatch):
+    """A NaN in the TLIST makes Horizons fail with an opaque loader error."""
+    from ztfcomet import query as qmod
+
+    sent = []
+
+    class Fake:
+        def __init__(self, id=None, id_type=None, location=None, epochs=None):
+            sent.append(list(epochs)); self._n = len(epochs)
+        def ephemerides(self, **k):
+            class T:
+                def __init__(self, n): self._n = n
+                def to_pandas(self):
+                    return pd.DataFrame({"datetime_jd": np.arange(self._n)})
+            return T(self._n)
+
+    monkeypatch.setattr(qmod, "Horizons", Fake)
+    qmod.query_sso_ephemeris(1, epochs=[2460900.5, float("nan")])
+    assert sent[0] == [2460900.5]

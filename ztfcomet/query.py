@@ -118,9 +118,10 @@ def query_sso_ephemeris(target_id, epochs, quantities=cfg.EPHEM_QUANTITIES_COARS
     Returns
     -------
     pandas.DataFrame
-        Ephemeris table, empty if the object could not be resolved at all.
-        A partial table is returned when some chunks succeed and others do not,
-        so callers must join on JD rather than assume a row-for-row match.
+        Ephemeris table, **one row per unique epoch** and sorted by JD.  Callers
+        must join on JD rather than assume a row-for-row match with the input:
+        duplicate epochs are collapsed before the request, and a partial table
+        is returned when some chunks succeed and others do not.
 
     Notes
     -----
@@ -137,9 +138,17 @@ def query_sso_ephemeris(target_id, epochs, quantities=cfg.EPHEM_QUANTITIES_COARS
     if isinstance(epochs, dict):
         chunks = [epochs]
     else:
-        jds = list(np.atleast_1d(epochs))
-        if not jds:
+        jds = np.atleast_1d(np.asarray(epochs, dtype=float))
+        jds = jds[np.isfinite(jds)]
+        if jds.size == 0:
             return pd.DataFrame()
+        # Deduplicate. Horizons rejects a TLIST whose entries are ALL identical
+        # with "Bad dates -- start must be earlier than stop", which is what
+        # happens when one IRSA step returns several frames from a single
+        # exposure (the comet landing on two CCD quadrants). That killed 4 of 65
+        # steps in a 24P run. Duplicates are safe to drop because every caller
+        # joins the result back on JD, so both frames still get their ephemeris.
+        jds = np.unique(jds).tolist()
         chunks = [jds[i:i + max_epochs_per_call]
                   for i in range(0, len(jds), max_epochs_per_call)]
 
@@ -154,26 +163,38 @@ def query_sso_ephemeris(target_id, epochs, quantities=cfg.EPHEM_QUANTITIES_COARS
                                  epochs=chunk).ephemerides(quantities=quantities)
                 break
             except ValueError as exc:
+                # astroquery raises ValueError both for an ambiguous designation
+                # and for a plain service failure ("Query failed without known
+                # error message"). Only the first carries a candidate listing;
+                # the second is transient and must be retried, not treated as
+                # "no such object" -- doing so silently dropped 4 of 65 epochs
+                # in a 24P run, reported as "No valid Horizons record".
+                candidates = hz.parse_ambiguity_table(str(exc))
+                if not candidates:
+                    if attempt == max_retries - 1:
+                        log.warning("Horizons failed for %d epochs after %d attempts: %s",
+                                    len(chunk), max_retries,
+                                    str(exc).strip().splitlines()[0][:160])
+                    else:
+                        time.sleep(backoff * (attempt + 1))
+                    continue
+
                 # Ambiguous designation: pick the right apparition and retry.
                 # This must go through select_record, not "take the last row" --
                 # the last row is the fragment for 240P (see ztfcomet.horizons).
-                candidates = hz.parse_ambiguity_table(str(exc))
                 chosen = hz.select_record(
                     candidates,
                     epoch_jd=(chunk[0] if not isinstance(chunk, dict) and len(chunk)
                               else None),
                     allow_fragment=allow_fragment,
                     designation=str(resolved_id))
-                record = chosen.record if chosen else None
-                if record is None:
-                    log.warning("No valid Horizons record for %r: %s", resolved_id, exc)
-                    return pd.DataFrame()
-                if str(record) == str(resolved_id):
-                    log.warning("Horizons rejected record %s: %s", record, exc)
+                if chosen is None or str(chosen.record) == str(resolved_id):
+                    log.warning("No usable Horizons record for %r among %d candidates",
+                                resolved_id, len(candidates))
                     return pd.DataFrame()
                 log.info("Ambiguous designation %r -> record %s (%s)",
-                         resolved_id, record, chosen.label)
-                resolved_id = record          # remember it for the later chunks
+                         resolved_id, chosen.record, chosen.label)
+                resolved_id = chosen.record   # remember it for the later chunks
                 id_type = None                # a record number needs no class hint
             except Exception as exc:          # noqa: BLE001 — transient HTTP
                 if attempt == max_retries - 1:
