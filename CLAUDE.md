@@ -20,8 +20,8 @@
 - **Configuration:** Per-target constants (orbit records, dates, ρ, β) belong in `ztfcomet/config.py`, never pasted into a notebook.
 
 ## Architecture & Structure
-- `ztfcomet/`: The package. `directory` (paths), `config` (targets and tunables), `query` (Horizons + IRSA), `horizons` (designation → orbit record), `cutout` (URLs + validated download), `phot` (photometry + Afρ), `gaia` (contamination), `plotting`, `rcparams`.
-- `notebooks/`: `main.py` (end-to-end driver), `query.ipynb`, `afrho.ipynb`, `figure.ipynb`. Validation and figure work only — **science logic belongs in the package**, so that what runs in batch is what the notebooks validate.
+- `ztfcomet/`: The package. `directory` (paths), `config` (targets and tunables), `query` (Horizons + IRSA), `horizons` (designation → orbit record), `cutout` (URLs + validated download), `phot` (photometry + Afρ), `gaia` (contamination), `orbit` (perihelion elements, Kepler), `profile` (radial SB profile vs field stars), `plotting`, `rcparams`.
+- `notebooks/`: `main.py` (single-target driver), `survey.py` (unattended multi-target batch, resumable), `query.ipynb`, `afrho.ipynb`, `figure.ipynb`. Validation and figure work only — **science logic belongs in the package**, so that what runs in batch is what the notebooks validate.
 - `notebooks/legacy/`: Pre-merge notebooks, outputs stripped, provenance only. They do not run against this package and contain known bugs. **Do not copy code out of them.**
 - `doc/`: Technical guidebooks. `primitive_code_analysis.md` is the review that motivated this structure.
 - `data/`, `results/`, `fig/`: Gitignored outputs. Raw FITS live on the SSD (see `directory.py`).
@@ -40,6 +40,9 @@ These are fixed bugs with regression tests. Changing them silently corrupts resu
 - **A designation can resolve to a fragment.** `240P` lists `240P-B` too; taking the last record picks the fragment. Fragments are excluded unless `allow_fragment=True`.
 - **`sep.winpos` returns `(x, y, flag)` — three values.** Unpacking two raises and, if caught, silently disables centroiding everywhere.
 - Contamination flagging needs Gaia DR3 at `$ZTFCOMET_GAIA`; it is complete only to `G < 18.5`.
+- **Afρ figures plot r_h − q**, never signed r_h (which has an unreachable band between −q and +q). The T−Tp axis is Kepler-derived and validated to 0.01 d.
+- **Radial profiles are normalised to the mean SB within 1.5 px** for comet and stars alike; the comet is oversampled ×4 (bilinear, flux-conserving), stars are not.
+- **A long run must not fall back to the local `data/`** — `survey.py` refuses to start there. Pin `ZTFCOMET_DATA` for unattended runs.
 
 ## Strict Constraints (Do NOT Do These)
 - Never introduce new third-party dependencies without asking for confirmation first.

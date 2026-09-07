@@ -13,8 +13,10 @@ Per target
 3. Download with FITS validation, then **re-verify every requested URL against
    what is on disk** before anything downstream runs.
 4. Multi-aperture Af-rho photometry, apertures filtered by the scale test.
-5. Figures: Af-rho vs signed r_h (clean frames only), aperture comparison,
-   diagnostics.
+5. Radial surface-brightness profile of the comet against field stars on the
+   same frame -- is the coma extended, and does it fall as 1/rho?
+6. Figures: Af-rho vs r_h - q (clean frames only), aperture comparison,
+   profile summary.
 
 A target whose ephemeris never reaches ``vmag_max`` gets an empty directory and
 a ``no_epochs`` status -- that is a result, not a failure.
@@ -52,12 +54,14 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import pandas as pd
 
+import numpy as np
 import ztfcomet as zc
 from ztfcomet import orbit
+from ztfcomet import profile as profile_mod
 
 log = logging.getLogger("ztfcomet.survey")
 
-STEPS = ("query", "download", "phot", "figures")
+STEPS = ("query", "download", "phot", "profile", "figures")
 DEFAULT_LIST = "doc/sx_comet_list_ver2607.xlsx"
 
 
@@ -129,8 +133,13 @@ def is_done(entry):
 
 
 # ------------------------------------------------------------------ one target
-def process(designation, args, root):
-    """Run the pipeline for one comet.  Returns a status dict."""
+def process(designation, args, root, prior=None):
+    """Run the pipeline for one comet.  Returns a status dict.
+
+    *prior* is the target's existing status entry, if any; a post-hoc pass
+    (``--steps profile figures``) starts from it so the query and download
+    counts recorded by the full run are preserved rather than overwritten.
+    """
     started = time.time()
     target = zc.get_target(designation)
     if args.vmag_max is not None or args.interval_days is not None:
@@ -146,8 +155,9 @@ def process(designation, args, root):
     if args.end:
         target = dataclasses.replace(target, end_date=args.end)
 
-    entry = {"target": target.name, "designation": designation,
-             "status": "running", "started": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+    entry = dict(prior) if prior else {}
+    entry.update(target=target.name, designation=designation, status="running",
+                 started=datetime.now(timezone.utc).isoformat(timespec="seconds"))
 
     datadir = zc.data_dir(target.name)          # created even when empty
     figdir = zc.fig_dir(target.name)
@@ -244,15 +254,43 @@ def process(designation, args, root):
                 entry[flag] = int(table[flag].sum())
         log.info("%s: %d rows over %d apertures, %d clean",
                  target.name, len(table), entry["n_apertures"], entry["n_clean"])
-    elif "figures" in args.steps:
+    elif "figures" in args.steps or "profile" in args.steps:
         path = zc.result_dir(target.name, create=False) / f"photometry_{zc.target_slug(target.name)}.csv"
         if path.exists():
             table = pd.read_csv(path)
 
+    elements = None
+    if table is not None and not table.empty and ("profile" in args.steps or "figures" in args.steps):
+        elements = fetch_elements_for(target, table)
+
+    # -------------------------------------------------------- radial profile
+    if "profile" in args.steps and table is not None and not table.empty:
+        try:
+            _, psum = profile_mod.run_profiles(
+                target, table, datadir, progress=False,
+                plots=not args.no_profile_plots, elements=elements)
+            if psum is not None and not psum.empty:
+                good = psum[psum["quality_ok"].astype(bool)] if "quality_ok" in psum else psum
+                entry.update(
+                    profile_frames=len(psum),
+                    profile_stars_median=float(psum["n_stars"].median()),
+                    profile_slope_median=float(good["slope_comet"].median()) if len(good) else np.nan,
+                    profile_slope_p16=float(good["slope_comet"].quantile(0.16)) if len(good) else np.nan,
+                    profile_slope_p84=float(good["slope_comet"].quantile(0.84)) if len(good) else np.nan,
+                    profile_star_slope_median=float(psum["slope_star"].median()),
+                    profile_excess_median=float(good["excess_at_3fwhm"].median()) if len(good) else np.nan,
+                )
+                log.info("%s: coma slope median %+.2f (stars %+.2f) over %d clean frames",
+                         target.name, entry["profile_slope_median"],
+                         entry["profile_star_slope_median"], len(good))
+        except Exception as exc:                                # noqa: BLE001
+            log.warning("%s: radial profiles failed: %s", target.name, exc)
+            entry["profile"] = f"failed: {exc}"
+
     # -------------------------------------------------------------- figures
     if "figures" in args.steps and table is not None and not table.empty:
         try:
-            make_figures(target, table, figdir)
+            make_figures(target, table, figdir, elements=elements)
             entry["figures"] = "ok"
         except Exception as exc:                                # noqa: BLE001
             log.warning("%s: figures failed: %s", target.name, exc)
@@ -268,8 +306,18 @@ def _finish(entry, started):
     return entry
 
 
-def make_figures(target, table, figdir):
-    """Af-rho vs signed r_h (clean only), aperture comparison, diagnostics."""
+def fetch_elements_for(target, table):
+    """Perihelion elements osculating near the observations, or None."""
+    try:
+        record = target.resolve_orbit_record(float(table["obsjd"].median()))
+        return orbit.fetch_elements(record, epoch_jd=float(table["obsjd"].median()))
+    except Exception as exc:                                    # noqa: BLE001
+        log.warning("%s: no orbital elements (%s); plotting plain r_h", target.name, exc)
+        return None
+
+
+def make_figures(target, table, figdir, elements=None):
+    """Af-rho vs r_h - q (clean only), aperture comparison, diagnostics."""
     figdir = Path(figdir)
     figdir.mkdir(parents=True, exist_ok=True)
     slug = zc.target_slug(target.name)
@@ -285,16 +333,6 @@ def make_figures(target, table, figdir):
     # Reference aperture: the one with the most clean measurements.
     counts = clean.groupby("rho_km").size()
     rho_ref = float(counts.idxmax())
-
-    # Perihelion elements let the abscissa be r_h - q and add the date axis.
-    # Osculate near the observations: non-gravitational forces move q and Tp.
-    elements = None
-    try:
-        record = target.resolve_orbit_record(float(table["obsjd"].median()))
-        elements = orbit.fetch_elements(record, epoch_jd=float(table["obsjd"].median()))
-    except Exception as exc:                                    # noqa: BLE001
-        log.warning("%s: no orbital elements (%s); plotting plain r_h",
-                    target.name, exc)
 
     ax = zc.plot_afrho_vs_rh({target.name: table}, rho_km=rho_ref, filters=bands,
                              only_good=True, elements=elements)
@@ -329,6 +367,8 @@ def parse_args(argv=None):
     p.add_argument("--no-resume", action="store_true", help="reprocess completed targets")
     p.add_argument("--overwrite", action="store_true", help="re-download existing files")
     p.add_argument("--limit", type=int, help="process at most this many targets")
+    p.add_argument("--no-profile-plots", action="store_true",
+                   help="skip the per-frame radial-profile PNGs (summary still made)")
     p.add_argument("--allow-fallback-root", action="store_true",
                    help="proceed even if the SSD data root is unavailable")
     return p.parse_args(argv)
@@ -378,7 +418,7 @@ def main(argv=None):
 
         log.info("[%d/%d] %s", i, len(designations), designation)
         try:
-            entry = process(designation, args, root)
+            entry = process(designation, args, root, prior=status.get(name))
         except KeyboardInterrupt:
             log.warning("interrupted by user")
             save_status(root, status)
@@ -457,6 +497,26 @@ def write_summary(root, status, n_skipped, args):
                 kind = "critical" if f in zc.CRITICAL_FLAGS else "advisory"
                 lines.append(f"| `{f.replace('flag_', '')}` | {total(f)} | "
                              f"{100 * total(f) / n_rows:.1f}% | {kind} |")
+
+    if "profile_slope_median" in df.columns:
+        prof = df[np.isfinite(pd.to_numeric(df["profile_slope_median"], errors="coerce"))]
+        if len(prof):
+            coma = prof[prof["profile_slope_median"].between(-1.3, -0.7)]
+            lines += ["", "## Coma radial profiles", "",
+                      "Power-law slope of surface brightness vs radius outside the PSF core,",
+                      "median over clean frames. A steady-state coma gives -1; field stars on",
+                      "the same frames give about -4.", "",
+                      f"- targets profiled: **{len(prof)}**",
+                      f"- median slope within [-1.3, -0.7] (steady-state-like): **{len(coma)}**", "",
+                      "| target | frames | slope (16-84%) | stars | excess @3 FWHM |",
+                      "|---|---|---|---|---|"]
+            for _, r in prof.sort_values("profile_slope_median").iterrows():
+                lines.append(
+                    f"| {r['target']} | {int(r.get('profile_frames', 0))} | "
+                    f"{r['profile_slope_median']:+.2f} ({r.get('profile_slope_p16', np.nan):+.2f} .. "
+                    f"{r.get('profile_slope_p84', np.nan):+.2f}) | "
+                    f"{r.get('profile_star_slope_median', np.nan):+.1f} | "
+                    f"{r.get('profile_excess_median', np.nan):.0f}x |")
 
     incomplete = df[df.get("complete") == False] if "complete" in df else df.iloc[:0]  # noqa: E712
     if len(incomplete):

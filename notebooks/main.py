@@ -23,8 +23,9 @@ Re-fetch over a different window with a bigger aperture::
 
     python notebooks/main.py 2P --start 2025-07-01 --end 2026-05-31 --rho-km 20000
 
-Stage names for ``--steps`` are ``query``, ``download``, ``phot`` and
-``figures``; all four run by default.
+Stage names for ``--steps`` are ``query``, ``download``, ``phot``, ``profile``
+and ``figures``; all five run by default. ``profile`` compares the comet's
+radial surface-brightness profile with field stars on the same frame.
 
 Quality checks include a Gaia DR3 background-source test: if catalogued stars
 inside the aperture carry >=30% of the comet's predicted flux, the frame is
@@ -60,7 +61,7 @@ import ztfcomet as zc
 
 log = logging.getLogger("ztfcomet.main")
 
-STEPS = ("query", "download", "phot", "figures")
+STEPS = ("query", "download", "phot", "profile", "figures")
 
 
 def parse_args(argv=None):
@@ -97,6 +98,8 @@ def parse_args(argv=None):
     parser.add_argument("--no-figures", action="store_true", help="shorthand for dropping the figures step")
     parser.add_argument("--no-cutout-figures", action="store_true",
                         help="skip the per-frame PNGs; still make the lightcurve")
+    parser.add_argument("--no-profile-plots", action="store_true",
+                        help="skip per-frame radial-profile PNGs; the summary is still made")
     parser.add_argument("--overwrite", action="store_true", help="re-download existing files")
     parser.add_argument("--dpi", type=int, default=50, help="dpi for batch cutout PNGs (default 50)")
     parser.add_argument("--quiet", action="store_true")
@@ -181,12 +184,22 @@ def run_target(target, steps, args):
             log.warning("%s: no frames to reduce in %s", target.name, datadir)
             return None
         summarise(target, table)
-    elif "figures" in steps:
+    elif "figures" in steps or "profile" in steps:
         path = zc.result_dir(target.name) / f"photometry_{zc.target_slug(target.name)}.csv"
         if path.exists():
             table = pd.read_csv(path)
         else:
             log.warning("%s: %s not found; run the phot step first", target.name, path)
+
+    if "profile" in steps and table is not None and not table.empty:
+        from ztfcomet import profile as profile_mod
+        _, psum = profile_mod.run_profiles(target, table, datadir,
+                                           plots=not args.no_profile_plots)
+        if psum is not None and not psum.empty:
+            good = psum[psum["quality_ok"].astype(bool)] if "quality_ok" in psum else psum
+            print(f"  coma profile   : slope median {good['slope_comet'].median():+.2f} "
+                  f"(stars {psum['slope_star'].median():+.2f}; steady-state coma = -1), "
+                  f"{len(psum)} frames, excess @3 FWHM median {good['excess_at_3fwhm'].median():.0f}x")
 
     if "figures" in steps and table is not None and not table.empty:
         if not args.no_cutout_figures:

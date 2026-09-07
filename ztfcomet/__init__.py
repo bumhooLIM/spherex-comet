@@ -1,5 +1,9 @@
 """ztfcomet — query and analyse ZTF observations of comets.
 
+Beyond query and Af-rho photometry, :mod:`ztfcomet.profile` compares the
+comet's radial surface-brightness profile with field stars on the same frame
+-- the test of whether the coma is extended and whether it falls as 1/rho.
+
 Combines what used to be two separate projects: ``ztfssoquery`` (cutout FITS
 retrieval from IRSA) and the ``ztf-comet`` notebooks (Af-rho photometry and
 figures).
@@ -28,8 +32,8 @@ from __future__ import annotations
 
 import logging
 
-from . import (config, cutout, directory, gaia, horizons, phot, plotting,
-               query, rcparams)
+from . import (config, cutout, directory, gaia, horizons, orbit, phot, plotting,
+               profile, query, rcparams)
 from .config import (
     PhotConfig, QueryConfig, Target, TARGETS, SOLAR_APPMAG_AB, get_target,
 )
@@ -49,6 +53,9 @@ from .phot import (
     aperture_scale_ok, build_frame_table, calibrate, compute_afrho,
     flag_contamination, measure_photometry, run_multi_aperture, run_photometry,
 )
+from .profile import (ProfileConfig, fit_powerlaw, radial_profile, run_profiles,
+                      select_field_stars, stack_star_profiles)
+from .orbit import fetch_elements, time_from_perihelion
 from .plotting import (plot_afrho, plot_afrho_apertures, plot_afrho_vs_rh,
                        plot_cutout, plot_cutout_grid, save_all_cutouts, signed_rh)
 from .query import (
@@ -60,8 +67,8 @@ __version__ = "0.3.0"
 __all__ = [
     "__version__",
     # submodules
-    "config", "cutout", "directory", "gaia", "horizons", "phot", "plotting",
-    "query", "rcparams",
+    "config", "cutout", "directory", "gaia", "horizons", "orbit", "phot", "plotting",
+    "profile", "query", "rcparams",
     # config
     "Target", "QueryConfig", "PhotConfig", "TARGETS", "get_target", "SOLAR_APPMAG_AB",
     # directory
@@ -77,6 +84,11 @@ __all__ = [
     "calibrate", "compute_afrho", "run_photometry", "run_multi_aperture",
     "flag_contamination", "aperture_scale_ok",
     "FLAG_COLUMNS", "CRITICAL_FLAGS", "ADVISORY_FLAGS",
+    # profile
+    "ProfileConfig", "radial_profile", "select_field_stars", "stack_star_profiles",
+    "fit_powerlaw", "run_profiles",
+    # orbit
+    "fetch_elements", "time_from_perihelion",
     # gaia
     "GaiaCatalog", "effective_magnitude",
     # horizons
