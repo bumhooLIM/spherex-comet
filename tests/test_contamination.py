@@ -617,3 +617,47 @@ def test_signed_rh_falls_back_without_r_rate():
     from ztfcomet import plotting as plotting_mod
     table = pd.DataFrame({"r": [2.0, 1.5]})
     assert list(plotting_mod.signed_rh(table)) == [2.0, 1.5]
+
+
+def _leg_table(rates, rho=15000.0):
+    n = len(rates)
+    return pd.DataFrame({
+        "r": np.linspace(3.0, 1.5, n), "r_rate": rates,
+        "filter": ["ZTF_r"] * n, "rho_km": [rho] * n,
+        "afrho0_cm": np.linspace(50, 300, n), "afrho0_cm_err": [5.0] * n,
+        "quality_ok": [True] * n,
+    })
+
+
+def test_single_leg_plot_keeps_rh_positive():
+    """Signing r_h with only one orbital leg would make every x negative.
+
+    10P is entirely inbound; the first survey figure showed r_h running
+    -3.9 to -1.4 under an axis labelled r_h.
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    from ztfcomet import plotting as pl
+
+    ax = pl.plot_afrho_vs_rh({"10P": _leg_table([-5.0] * 6)}, rho_km=15000.0)
+    xs = np.concatenate([line.get_xdata() for line in ax.lines if len(line.get_xdata())])
+    assert (xs > 0).all(), "single-leg plot rendered negative r_h"
+    assert "pre-perihelion" in ax.get_xlabel()
+    plt_close(ax)
+
+
+def test_two_leg_plot_signs_the_inbound_branch():
+    import matplotlib
+    matplotlib.use("Agg")
+    from ztfcomet import plotting as pl
+
+    ax = pl.plot_afrho_vs_rh({"24P": _leg_table([-5.0, -5.0, -5.0, 5.0, 5.0, 5.0])},
+                             rho_km=15000.0)
+    xs = np.concatenate([line.get_xdata() for line in ax.lines if len(line.get_xdata())])
+    assert (xs < 0).any() and (xs > 0).any(), "two-leg plot did not separate the legs"
+    plt_close(ax)
+
+
+def plt_close(ax):
+    import matplotlib.pyplot as plt
+    plt.close(ax.figure)
