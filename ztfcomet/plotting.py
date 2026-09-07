@@ -288,39 +288,52 @@ def signed_rh(table):
 
 
 def plot_afrho_vs_rh(tables, rho_km=None, filters=("ZTF_r",), only_good=True,
-                     split_perihelion=True, ax=None, colors=None, markers=None,
-                     legend=True, annotate_legs=True):
-    """Af-rho against heliocentric distance, clean points only.
+                     elements=None, split_perihelion=True, date_axis=True,
+                     ax=None, colors=None, markers=None, legend=True,
+                     annotate_legs=True):
+    """Af-rho against distance from perihelion, clean points only.
+
+    The abscissa is ``r_h - q``, signed by orbital leg: negative inbound,
+    positive outbound, zero at perihelion.  Plain r_h cannot express orbital
+    phase -- a comet passes every r_h twice -- and *signed* r_h leaves an empty
+    band between -q and +q that no comet can occupy, with a meaningless zero in
+    the middle of it.  Measuring from perihelion removes both problems and puts
+    the two legs on one continuous axis anchored at a real physical point.
+
+    With *elements* supplied and a single target, a second axis along the top
+    gives time from perihelion.  Its ticks sit at the **same positions** as the
+    r_h ticks -- the distance axis stays linear and the dates fall where they
+    fall, which is the honest way round given how strongly non-linear
+    ``t(r_h)`` is near perihelion.
 
     Parameters
     ----------
     tables : DataFrame or mapping of label -> DataFrame
     rho_km : float, optional
-        Select one aperture from a multi-aperture table.  Required when the
-        table holds more than one, since mixing apertures on one axis is
-        meaningless.
+        Select one aperture from a multi-aperture table.
     only_good : bool
-        Default **True** here: this figure is the science result, so flagged
-        frames are excluded rather than drawn as open symbols.
-    split_perihelion : bool
-        Sign r_h by orbital leg (see :func:`signed_rh`) so the inbound and
-        outbound branches do not overlap.  A marker at x = 0 is perihelion.
+        Default True: this is the science figure, so flagged frames are excluded.
+    elements : ztfcomet.orbit.PerihelionInfo, optional
+        ``q``, ``e`` and ``Tp_jd``.  Without it the axis falls back to plain r_h.
+    date_axis : bool
+        Draw the time-from-perihelion axis when elements allow it.
 
     Returns
     -------
     matplotlib.axes.Axes
     """
+    from . import orbit as orbit_mod
+
     if not isinstance(tables, dict):
         tables = {"target": tables}
 
     if ax is None:
-        _, ax = plt.subplots(figsize=(10, 6))
+        _, ax = plt.subplots(figsize=(10, 6.4))
 
     palette = colors or plt.rcParams["axes.prop_cycle"].by_key().get("color", ["k"])
     marker_cycle = markers or ["o", "s", "^", "D", "v", "P"]
 
     def _selected(table):
-        """The rows this call will actually draw, for the pre-scan."""
         sub = table
         if rho_km is not None and "rho_km" in sub:
             sub = sub[np.isclose(sub["rho_km"], rho_km)]
@@ -328,9 +341,8 @@ def plot_afrho_vs_rh(tables, rho_km=None, filters=("ZTF_r",), only_good=True,
             sub = sub[sub["quality_ok"]]
         return sub
 
-    # Decide about signing BEFORE plotting. Signing exists to separate two
-    # orbital legs; with only one leg it would render every r_h negative under
-    # an axis labelled r_h. Most targets in a 18-month window are single-leg.
+    # Decide the abscissa before plotting anything.
+    have_q = elements is not None and np.isfinite(elements.get("q", np.nan))
     saw_inbound = saw_outbound = False
     for _t in tables.values():
         if _t is None or len(_t) == 0 or "r_rate" not in _t:
@@ -338,55 +350,56 @@ def plot_afrho_vs_rh(tables, rho_km=None, filters=("ZTF_r",), only_good=True,
         rate = pd.to_numeric(_selected(_t)["r_rate"], errors="coerce")
         saw_inbound |= bool((rate < 0).any())
         saw_outbound |= bool((rate >= 0).any())
-    use_signed = bool(split_perihelion and saw_inbound and saw_outbound)
+    use_offset = bool(split_perihelion and have_q)
 
     for i, (label, table) in enumerate(tables.items()):
         if table is None or len(table) == 0:
             continue
-        sub = table
-        if rho_km is not None and "rho_km" in sub:
-            sub = sub[np.isclose(sub["rho_km"], rho_km)]
-        elif "rho_km" in sub and sub["rho_km"].nunique() > 1:
+        if rho_km is None and "rho_km" in table and table["rho_km"].nunique() > 1:
             raise ValueError("table holds several apertures; pass rho_km=")
-
-        if only_good and "quality_ok" in sub:
-            sub = sub[sub["quality_ok"]]
+        sub = _selected(table)
         sub = sub[np.isfinite(pd.to_numeric(sub.get("afrho0_cm"), errors="coerce"))]
         if sub.empty:
             continue
 
-        x = signed_rh(sub) if use_signed else pd.to_numeric(sub["r"], errors="coerce")
+        rh = pd.to_numeric(sub["r"], errors="coerce")
+        if use_offset:
+            leg = np.where(pd.to_numeric(sub.get("r_rate", 1.0),
+                                         errors="coerce").fillna(1.0) < 0, -1.0, 1.0)
+            x = (rh - elements["q"]) * leg
+        else:
+            x = rh
 
         for j, band in enumerate(filters):
-            keep = sub["filter"] == band
+            keep = (sub["filter"] == band).to_numpy()
             if not keep.any():
                 continue
             name = f"{label} ({band})" if len(tables) > 1 or len(filters) > 1 else band
-            ax.errorbar(x[keep], sub.loc[keep, "afrho0_cm"],
+            colour = palette[(j if len(tables) == 1 else i) % len(palette)]
+            ax.errorbar(np.asarray(x)[keep], sub.loc[keep, "afrho0_cm"],
                         yerr=sub.loc[keep, "afrho0_cm_err"],
                         fmt=marker_cycle[j % len(marker_cycle)], ms=6,
-                        color=palette[(j if len(tables) == 1 else i) % len(palette)],
-                        ecolor=palette[(j if len(tables) == 1 else i) % len(palette)],
-                        elinewidth=1, capsize=2, ls="none", label=name)
+                        color=colour, ecolor=colour, elinewidth=1, capsize=2,
+                        ls="none", label=name)
 
-    if use_signed:
-        ax.axvline(0, color="0.5", ls=":", lw=1.5)
-        if annotate_legs:
-            ax.annotate("pre-perihelion", xy=(0.02, 0.02), xycoords="axes fraction",
-                        fontsize=12, ha="left", va="bottom", color="0.35")
-            ax.annotate("post-perihelion", xy=(0.98, 0.02), xycoords="axes fraction",
-                        fontsize=12, ha="right", va="bottom", color="0.35")
-        ax.set_xlabel(r"$-r_\mathrm{h}$  |  $+r_\mathrm{h}$  (AU)")
-        # Show distance, not the sign, on the tick labels.
-        ax.xaxis.set_major_formatter(
-            mticker.FuncFormatter(lambda v, _pos: f"{abs(v):g}"))
+    if use_offset:
+        _mark_perihelion(ax, elements, saw_inbound, saw_outbound, annotate_legs)
+        if saw_inbound and saw_outbound:
+            legs = r"        $\leftarrow$ pre    post $\rightarrow$"
+        elif saw_inbound:
+            legs = r"        [inbound, pre-perihelion]"
+        elif saw_outbound:
+            legs = r"        [outbound, post-perihelion]"
+        else:
+            legs = ""
+        ax.set_xlabel(r"$r_\mathrm{h} - q$  (AU)" + legs)
+        if date_axis and len(tables) == 1:
+            _add_date_axis(ax, elements, orbit_mod)
     else:
-        # Single leg: plain r_h, labelled with which leg, so the figure is not
-        # silently ambiguous about where the comet was in its orbit.
-        leg = ("inbound, pre-perihelion" if saw_inbound and not saw_outbound
-               else "outbound, post-perihelion" if saw_outbound and not saw_inbound
-               else None)
-        ax.set_xlabel(r"$r_\mathrm{h}$ (AU)" + (f"   [{leg}]" if leg else ""))
+        leg_note = ("inbound, pre-perihelion" if saw_inbound and not saw_outbound
+                    else "outbound, post-perihelion" if saw_outbound and not saw_inbound
+                    else None)
+        ax.set_xlabel(r"$r_\mathrm{h}$ (AU)" + (f"   [{leg_note}]" if leg_note else ""))
 
     ax.set_ylabel(r"$A(0\degree)f\rho$ (cm)")
     if legend:
@@ -394,8 +407,55 @@ def plot_afrho_vs_rh(tables, rho_km=None, filters=("ZTF_r",), only_good=True,
     return ax
 
 
+def _mark_perihelion(ax, elements, saw_inbound, saw_outbound, annotate_legs):
+    """Vertical marker at perihelion, labelled with q and the date."""
+    ax.axvline(0.0, color="crimson", ls="--", lw=1.5, zorder=0)
+
+    parts = [rf"perihelion   $q$ = {elements['q']:.3f} AU"]
+    tp = elements.get("Tp_jd")
+    if tp is not None and np.isfinite(tp):
+        parts.append(rf"$T_\mathrm{{p}}$ = {Time(float(tp), format='jd').isot[:10]}")
+    # Upper left: far pre-perihelion is where Af-rho is lowest, so this corner
+    # is nearly always empty, whichever legs the target has.
+    ax.annotate("\n".join(parts), xy=(0.02, 0.97), xycoords="axes fraction",
+                fontsize=11, color="crimson", ha="left", va="top",
+                bbox=dict(boxstyle="round,pad=0.35", fc="white", ec="crimson",
+                          lw=1.0, alpha=0.85))
+
+
+
+def _add_date_axis(ax, elements, orbit_mod):
+    """Top axis: days from perihelion, at the distance axis' own tick positions.
+
+    Ticks stay linear in r_h and carry the corresponding dates, rather than the
+    reverse -- ``t(r_h)`` is steep near perihelion, so date-linear ticks would
+    bunch the distance scale into unreadable clumps.
+    """
+    lo, hi = ax.get_xlim()
+    ticks = np.array([tk for tk in ax.get_xticks() if lo <= tk <= hi])
+    if ticks.size == 0:
+        return None
+
+    q, e = float(elements["q"]), float(elements["e"])
+    rh_at_tick = q + np.abs(ticks)
+    days = orbit_mod.time_from_perihelion(rh_at_tick, q, e)
+    days = days * np.where(ticks < 0, -1.0, 1.0)
+
+    labels = ["" if not np.isfinite(d) else (f"{d:+.0f}" if abs(d) >= 1 else "0")
+              for d in days]
+
+    top = ax.twiny()
+    top.set_xlim(lo, hi)
+    top.set_xticks(ticks)
+    top.set_xticklabels(labels, fontsize=11)
+    top.set_xlabel(r"$T - T_\mathrm{p}$  (days from perihelion)", labelpad=6, fontsize=13)
+    top.tick_params(axis="x", which="minor", top=False)
+    return top
+
+
 def plot_afrho_apertures(table, filters=("ZTF_r",), only_good=True,
-                         split_perihelion=True, ax=None, legend=True):
+                         elements=None, split_perihelion=True, ax=None,
+                         legend=True):
     """Af-rho vs r_h for every aperture in a multi-aperture table.
 
     One colour per ``rho_km``.  Because Af-rho for a steady-state ``1/rho`` coma
@@ -413,8 +473,8 @@ def plot_afrho_apertures(table, filters=("ZTF_r",), only_good=True,
         colour = cmap(i / max(len(radii) - 1, 1))
         plot_afrho_vs_rh({f"{rho / 1000:g}k km": table}, rho_km=rho, filters=filters,
                          only_good=only_good, split_perihelion=split_perihelion,
-                         ax=ax, colors=[colour], legend=False,
-                         annotate_legs=(i == 0))
+                         elements=elements, ax=ax, colors=[colour], legend=False,
+                         annotate_legs=(i == 0), date_axis=(i == len(radii) - 1))
     if legend:
         ax.legend(fontsize=10, frameon=False, title=r"$\rho$")
     return ax

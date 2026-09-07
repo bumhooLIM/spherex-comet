@@ -639,8 +639,9 @@ def test_single_leg_plot_keeps_rh_positive():
     matplotlib.use("Agg")
     from ztfcomet import plotting as pl
 
+    # No elements: falls back to plain r_h, which must stay positive.
     ax = pl.plot_afrho_vs_rh({"10P": _leg_table([-5.0] * 6)}, rho_km=15000.0)
-    xs = np.concatenate([line.get_xdata() for line in ax.lines if len(line.get_xdata())])
+    xs = _plotted_x(ax)
     assert (xs > 0).all(), "single-leg plot rendered negative r_h"
     assert "pre-perihelion" in ax.get_xlabel()
     plt_close(ax)
@@ -651,13 +652,91 @@ def test_two_leg_plot_signs_the_inbound_branch():
     matplotlib.use("Agg")
     from ztfcomet import plotting as pl
 
+    from ztfcomet import orbit
+
+    el = orbit.PerihelionInfo(q=1.2, e=0.7, Tp_jd=2461048.8)
     ax = pl.plot_afrho_vs_rh({"24P": _leg_table([-5.0, -5.0, -5.0, 5.0, 5.0, 5.0])},
-                             rho_km=15000.0)
-    xs = np.concatenate([line.get_xdata() for line in ax.lines if len(line.get_xdata())])
+                             rho_km=15000.0, elements=el)
+    xs = _plotted_x(ax)
     assert (xs < 0).any() and (xs > 0).any(), "two-leg plot did not separate the legs"
     plt_close(ax)
 
 
 def plt_close(ax):
     import matplotlib.pyplot as plt
+    plt.close(ax.figure)
+
+
+def _plotted_x(ax):
+    """x of the drawn data points, excluding the perihelion marker line."""
+    xs = [ln.get_xdata() for ln in ax.lines
+          if len(ln.get_xdata()) and ln.get_marker() not in ("", "None", None)]
+    return np.concatenate(xs) if xs else np.array([])
+
+
+# ---------------------------------------------------------------- orbit / axis
+def test_kepler_time_from_perihelion_matches_elliptic_geometry():
+    """t(r_h) from Kepler, checked against the definition at known points."""
+    from ztfcomet import orbit
+
+    q, e = 1.1839, 0.7083                       # 24P/Schaumasse
+    # At perihelion the time offset is zero.
+    assert orbit.time_from_perihelion([q], q, e)[0] == pytest.approx(0.0, abs=1e-6)
+    # Monotonic: further out is longer from perihelion.
+    t = orbit.time_from_perihelion([q + 0.1, q + 0.5, q + 1.0], q, e)
+    assert list(t) == sorted(t)
+    # Aphelion of this orbit is a(1+e); half the period from perihelion.
+    a = q / (1 - e)
+    period = 2 * np.pi / (orbit.GAUSS_K / a ** 1.5)
+    assert orbit.time_from_perihelion([a * (1 + e)], q, e)[0] == pytest.approx(
+        period / 2, rel=1e-6)
+
+
+def test_kepler_handles_all_three_conic_cases():
+    from ztfcomet import orbit
+
+    for e in (0.9, 0.9999, 1.0, 1.5, 3.0):      # elliptic, near-parabolic, hyperbolic
+        t = orbit.time_from_perihelion([2.0, 5.0], q=1.0, e=e)
+        assert np.all(np.isfinite(t)), f"e={e} produced non-finite times"
+        assert t[1] > t[0] > 0, f"e={e} not monotonic in r_h"
+
+
+def test_beyond_aphelion_is_unreachable():
+    """A closed orbit never exceeds a(1+e); such radii must not saturate."""
+    from ztfcomet import orbit
+    q, e = 1.0, 0.3                                  # aphelion = 1.857 au
+    t = orbit.time_from_perihelion([1.5, 5.0], q, e)
+    assert np.isfinite(t[0])
+    assert np.isnan(t[1]), "beyond aphelion silently clamped to half a period"
+
+
+def test_time_from_perihelion_signs_by_leg():
+    from ztfcomet import orbit
+    t = orbit.time_from_perihelion([2.0, 2.0], q=1.0, e=0.5, signed_by=[-1.0, 1.0])
+    assert t[0] < 0 < t[1] and abs(t[0]) == pytest.approx(abs(t[1]))
+
+
+def test_inside_perihelion_is_unreachable_not_nan():
+    from ztfcomet import orbit
+    t = orbit.time_from_perihelion([0.5], q=1.0, e=0.5)
+    assert np.isfinite(t[0]) and t[0] == 0.0
+
+
+def test_afrho_axis_is_offset_from_perihelion_not_signed_rh():
+    """x must be r_h - q, so no point sits in the unreachable band below q."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from ztfcomet import orbit, plotting as pl
+
+    q = 1.2
+    table = _leg_table([-5.0, -5.0, 5.0, 5.0])
+    table["r"] = [2.0, 1.5, 1.5, 2.0]
+    el = orbit.PerihelionInfo(q=q, e=0.7, Tp_jd=2461048.8)
+
+    ax = pl.plot_afrho_vs_rh({"t": table}, rho_km=15000.0, elements=el)
+    xs = _plotted_x(ax)
+    assert np.isclose(np.abs(xs).min(), 0.3)        # 1.5 - 1.2
+    assert (xs < 0).any() and (xs > 0).any()
+    assert "q$" in ax.get_xlabel() or "q" in ax.get_xlabel()
     plt.close(ax.figure)
