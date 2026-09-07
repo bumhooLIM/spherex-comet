@@ -31,19 +31,27 @@ fragment-safe Horizons resolution.
   the surrounding `except`, and left every aperture on the raw ephemeris position
   — ~1.5 px (25% of aperture radius) off on 79/111 frames. Symptom: an all-zero
   centroid-shift histogram.
-- **Horizons renumbers records.** `90001203`/`90001204` meant 240P once; today
-  they are 233P/234P. Never hardcode one — resolve the designation and verify
-  `targetname`. A designation can also resolve to a *fragment* (`240P` lists
-  `240P-B`, 2.9 mag fainter). Orbit epoch matters: 240P's two parent solutions
-  differ by ~50 arcsec in 2025, more than the aperture.
+- **Horizons answers questions you did not ask, and the answer looks fine.**
+  Three variants, all silent, all caught only by `verify_targetname`:
+  (a) a bare designation may not be read as a comet at all — `id="2P"` returns
+  **Styx (905)**, a moon of Pluto; always pass `id_type="smallbody"`.
+  (b) record numbers are renumbered — `90001203`/`90001204` meant 240P once and
+  now mean 233P/234P; never hardcode one.
+  (c) a designation can resolve to a *fragment* — `240P` lists `240P-B`, 2.9 mag
+  fainter. Orbit epoch matters too: 240P's parent solutions differ by ~50 arcsec
+  in 2025, more than the aperture.
+- **A silent "success" with zero output is a failure.** After targets moved to
+  designations, `search_frames` still read the now-`None` `horizons_id`; every
+  query aborted, was handled as "no coverage", and a two-comet run exited 0 with
+  no data. Check the counts, not the exit code.
 - **Gaia is complete only to G < 18.5** — "uncontaminated" means "no *catalogued*
   source". `gaiadr3_all.npy` (11 GB) is unsorted; use `gaiadr3_deccache/`
   (dec-sorted, 3–6 ms per cone search).
 - **`nbformat.validate()` does not catch broken notebooks.** Building `source`
   with `split("\n")` drops newlines, collapsing every cell to one unusable line
   while validation passes. Check that cells *compile*. Notebook `sys.path`
-  bootstraps must search upward for `ztfcomet/`, not assume `Path.cwd().parent`.
-- **Do not label pixel axes "RA"/"Dec"** — subplots need `projection=wcs`.
+  bootstraps must search upward for `ztfcomet/`. Do not label pixel axes
+  "RA"/"Dec" — subplots need `projection=wcs`.
 - **Horizons epoch lists ride in the URL**: 75 JDs work, 100 give 502; chunk at 50.
   `elong` needs quantity 23, not 16. Join on JD, never by row position (tol 1e-5 d).
 - **IRSA returns HTTP 200 with HTML error bodies.** Check the FITS signature; never

@@ -36,6 +36,7 @@ from astroquery.jplhorizons import Horizons
 from tqdm.auto import tqdm
 
 from . import config as cfg
+from . import horizons as hz
 
 __all__ = [
     "extract_lastrecnum", "query_sso_ephemeris", "query_ztf_metadata",
@@ -92,7 +93,8 @@ def extract_lastrecnum(error_msg: str) -> str | None:
 
 def query_sso_ephemeris(target_id, epochs, quantities=cfg.EPHEM_QUANTITIES_COARSE,
                         location=cfg.ZTF_OBSCODE, max_epochs_per_call=50,
-                        max_retries=3, backoff=2.0):
+                        max_retries=3, backoff=2.0, id_type=hz.SMALLBODY,
+                        allow_fragment=False):
     """Query JPL Horizons for ephemerides of a small body.
 
     Parameters
@@ -106,15 +108,20 @@ def query_sso_ephemeris(target_id, epochs, quantities=cfg.EPHEM_QUANTITIES_COARS
         Comma-separated Horizons quantity codes.
     location : str
         MPC observatory code; defaults to Palomar/ZTF.
+    id_type : str
+        Passed to Horizons.  Defaults to ``"smallbody"``, which is **not**
+        optional for comets: left to guess, Horizons resolves ``"2P"`` to Styx
+        (905), a moon of Pluto, and returns a plausible ephemeris for it.
     max_retries, backoff : int, float
         Transient HTTP failures are retried with linear backoff.
 
     Returns
     -------
     pandas.DataFrame
-        Ephemeris table, empty if the object could not be resolved at all.
-        A partial table is returned when some chunks succeed and others do not,
-        so callers must join on JD rather than assume a row-for-row match.
+        Ephemeris table, **one row per unique epoch** and sorted by JD.  Callers
+        must join on JD rather than assume a row-for-row match with the input:
+        duplicate epochs are collapsed before the request, and a partial table
+        is returned when some chunks succeed and others do not.
 
     Notes
     -----
@@ -131,9 +138,17 @@ def query_sso_ephemeris(target_id, epochs, quantities=cfg.EPHEM_QUANTITIES_COARS
     if isinstance(epochs, dict):
         chunks = [epochs]
     else:
-        jds = list(np.atleast_1d(epochs))
-        if not jds:
+        jds = np.atleast_1d(np.asarray(epochs, dtype=float))
+        jds = jds[np.isfinite(jds)]
+        if jds.size == 0:
             return pd.DataFrame()
+        # Deduplicate. Horizons rejects a TLIST whose entries are ALL identical
+        # with "Bad dates -- start must be earlier than stop", which is what
+        # happens when one IRSA step returns several frames from a single
+        # exposure (the comet landing on two CCD quadrants). That killed 4 of 65
+        # steps in a 24P run. Duplicates are safe to drop because every caller
+        # joins the result back on JD, so both frames still get their ephemeris.
+        jds = np.unique(jds).tolist()
         chunks = [jds[i:i + max_epochs_per_call]
                   for i in range(0, len(jds), max_epochs_per_call)]
 
@@ -144,21 +159,43 @@ def query_sso_ephemeris(target_id, epochs, quantities=cfg.EPHEM_QUANTITIES_COARS
         table = None
         for attempt in range(max_retries):
             try:
-                table = Horizons(id=resolved_id, location=location,
+                table = Horizons(id=resolved_id, id_type=id_type, location=location,
                                  epochs=chunk).ephemerides(quantities=quantities)
                 break
             except ValueError as exc:
-                # Ambiguous designation: recover the apparition record and retry.
-                record = extract_lastrecnum(str(exc))
-                if record is None:
-                    log.warning("No valid Horizons record for %r: %s", resolved_id, exc)
+                # astroquery raises ValueError both for an ambiguous designation
+                # and for a plain service failure ("Query failed without known
+                # error message"). Only the first carries a candidate listing;
+                # the second is transient and must be retried, not treated as
+                # "no such object" -- doing so silently dropped 4 of 65 epochs
+                # in a 24P run, reported as "No valid Horizons record".
+                candidates = hz.parse_ambiguity_table(str(exc))
+                if not candidates:
+                    if attempt == max_retries - 1:
+                        log.warning("Horizons failed for %d epochs after %d attempts: %s",
+                                    len(chunk), max_retries,
+                                    str(exc).strip().splitlines()[0][:160])
+                    else:
+                        time.sleep(backoff * (attempt + 1))
+                    continue
+
+                # Ambiguous designation: pick the right apparition and retry.
+                # This must go through select_record, not "take the last row" --
+                # the last row is the fragment for 240P (see ztfcomet.horizons).
+                chosen = hz.select_record(
+                    candidates,
+                    epoch_jd=(chunk[0] if not isinstance(chunk, dict) and len(chunk)
+                              else None),
+                    allow_fragment=allow_fragment,
+                    designation=str(resolved_id))
+                if chosen is None or str(chosen.record) == str(resolved_id):
+                    log.warning("No usable Horizons record for %r among %d candidates",
+                                resolved_id, len(candidates))
                     return pd.DataFrame()
-                if str(record) == str(resolved_id):
-                    log.warning("Horizons rejected record %s: %s", record, exc)
-                    return pd.DataFrame()
-                log.info("Ambiguous designation %r; switching to record %s",
-                         resolved_id, record)
-                resolved_id = record          # remember it for the later chunks
+                log.info("Ambiguous designation %r -> record %s (%s)",
+                         resolved_id, chosen.record, chosen.label)
+                resolved_id = chosen.record   # remember it for the later chunks
+                id_type = None                # a record number needs no class hint
             except Exception as exc:          # noqa: BLE001 — transient HTTP
                 if attempt == max_retries - 1:
                     log.warning("Horizons failed for %d epochs after %d attempts: %s",
@@ -259,6 +296,15 @@ def _merge_on_jd(ztf: pd.DataFrame, eph: pd.DataFrame) -> pd.DataFrame:
     return merged.reset_index(drop=True)
 
 
+def _window_midpoint(start_date, end_date):
+    """Mid-window Julian Date, used to pick the orbit solution for the run."""
+    try:
+        from astropy.time import Time
+        return float(Time([str(start_date), str(end_date)]).jd.mean())
+    except Exception:                                           # noqa: BLE001
+        return None
+
+
 def search_frames(target, progress=True):
     """Find every ZTF science frame containing *target*.
 
@@ -294,15 +340,32 @@ def search_frames(target, progress=True):
     qc = target.query
     report = QueryReport()
 
+    # Resolve the designation to a concrete orbit record for this window before
+    # anything else. Passing a bare designation would leave the object class to
+    # Horizons ("2P" -> Styx, a moon of Pluto) and the apparition to chance.
+    mid_jd = _window_midpoint(target.start_date, target.end_date)
+    target_id = target.resolve_orbit_record(mid_jd) if mid_jd else target.query_designation
+    log.info("%s: querying Horizons as %r", target.name, target_id)
+
     eph = query_sso_ephemeris(
-        target.horizons_id,
+        target_id,
         epochs={"start": target.start_date, "stop": target.end_date,
                 "step": f"{qc.interval_days:g}d"},
         quantities=cfg.EPHEM_QUANTITIES_COARSE,
+        max_retries=qc.max_retries, backoff=qc.backoff,
+        allow_fragment=target.allow_fragment,
     )
     if eph.empty:
         log.warning("No ephemeris returned for %s", target.name)
         return eph, pd.DataFrame(), report
+
+    if "targetname" in eph.columns and len(eph):
+        returned = str(eph["targetname"].iloc[0])
+        ok, why = hz.verify_targetname(returned, target.query_designation,
+                                       allow_fragment=target.allow_fragment)
+        if not ok:
+            raise ValueError(f"{target.name}: {why}")
+        log.info("%s: Horizons returned %s", target.name, returned)
 
     report.n_eph_steps = len(eph)
     eph = eph[eph["r"] < qc.rh_max]
@@ -346,7 +409,7 @@ def search_frames(target, progress=True):
         ztf = ztf.sort_values("obsjd").reset_index(drop=True)
 
         eph_exact = query_sso_ephemeris(
-            target.horizons_id, epochs=list(ztf["obsjd"]),
+            target_id, epochs=list(ztf["obsjd"]),
             quantities=cfg.EPHEM_QUANTITIES_FULL,
             max_epochs_per_call=qc.max_epochs_per_call,
             max_retries=qc.max_retries, backoff=qc.backoff,
