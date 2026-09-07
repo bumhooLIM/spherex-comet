@@ -187,7 +187,7 @@ def run_target(target, steps, args):
     elif "figures" in steps or "profile" in steps:
         path = zc.result_dir(target.name) / f"photometry_{zc.target_slug(target.name)}.csv"
         if path.exists():
-            table = pd.read_csv(path)
+            table = pd.read_csv(path, dtype={"target": str})
         else:
             log.warning("%s: %s not found; run the phot step first", target.name, path)
 

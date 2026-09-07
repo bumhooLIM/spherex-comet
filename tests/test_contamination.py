@@ -740,3 +740,26 @@ def test_afrho_axis_is_offset_from_perihelion_not_signed_rh():
     assert (xs < 0).any() and (xs > 0).any()
     assert "q$" in ax.get_xlabel() or "q" in ax.get_xlabel()
     plt.close(ax.figure)
+
+
+
+def test_target_names_survive_a_csv_round_trip(tmp_path):
+    """"2024E1" is valid scientific notation; pandas turns it into 20240.0.
+
+    The trap bites only when the column is homogeneous -- one target's own
+    photometry or profile table -- because a mixed column stays object dtype.
+    survey_status.csv is the resume checkpoint, so a float-parsed name means
+    the target is not recognised as done and gets reprocessed, silently.
+    """
+    single = tmp_path / "photometry_2024E1.csv"
+    pd.DataFrame({"target": ["2024E1"] * 3, "obsjd": [1.0, 2.0, 3.0]}).to_csv(single, index=False)
+    naive = pd.read_csv(single)
+    assert naive["target"].iloc[0] != "2024E1", "expected pandas to mangle a homogeneous column"
+    assert pd.read_csv(single, dtype={"target": str})["target"].iloc[0] == "2024E1"
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "notebooks"))
+    import survey
+    for names in (["2024E1"], ["2024E1", "2022E2", "24P"]):
+        pd.DataFrame({"target": names, "status": ["ok"] * len(names)}).to_csv(
+            tmp_path / "survey_status.csv", index=False)
+        assert set(survey.load_status(tmp_path)) == set(names)

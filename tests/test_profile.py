@@ -157,3 +157,99 @@ def test_star_stack_is_normalised_and_steep():
     assert core["median"].mean() == pytest.approx(1.0, abs=0.35)
     slope, _, _ = pf.fit_powerlaw(stack["r_pix"], stack["median"], 3.75, 10.0)
     assert slope < -2.5
+
+
+# --------------------------------------------------------- PSF-convolved model
+def _synthetic_scene(m_true=1.0, nuc_flux=0.0, coma_amp=300.0, fwhm=2.8, n=81, seed=0):
+    """A coma rho^-m plus optional nucleus, convolved with a Gaussian PSF, plus noise."""
+    from scipy.signal import fftconvolve
+    x, y, c = _grid(n)
+    r = np.hypot(x - c, y - c)
+    intrinsic = coma_amp * np.maximum(r, 0.25) ** (-m_true)
+    if nuc_flux > 0:
+        intrinsic = intrinsic.copy()
+        intrinsic[int(c), int(c)] += nuc_flux
+    psf = gaussian(amp=1.0, fwhm=fwhm, n=n)
+    psf /= psf.sum()
+    img = fftconvolve(intrinsic, psf, mode="same")
+    rng = np.random.default_rng(seed)
+    img = img + rng.normal(0, 0.5, img.shape) + 100.0        # sky 100, noise 0.5
+    return img, psf, c
+
+
+def _star_stack_from_psf(psf, c, n_stars=12):
+    """Pretend the PSF image is a field star and build a 'stack' from it."""
+    prof = pf.radial_profile(psf * 1e4, c, c, oversample=4)
+    c0 = pf.central_sb(prof)
+    return pd.DataFrame({"r_pix": prof["r_pix"], "median": prof["mean_clip"] / c0,
+                         "std": 0.02 * prof["mean_clip"] / c0, "n_stars": n_stars})
+
+
+# Coma flux inside 10 px is 2*pi*300*10 ~ 19 000 DN, so 6000 DN of nucleus is
+# ~24% -- comfortably above the 15% threshold, not on top of it.
+@pytest.mark.parametrize("m_true,nuc", [(1.0, 0.0), (1.0, 6000.0), (1.5, 0.0), (0.7, 0.0)])
+def test_coma_model_recovers_intrinsic_slope(m_true, nuc):
+    """A power law fitted outside the core is biased by the PSF and nucleus;
+    the forward model must recover the intrinsic slope regardless."""
+    img, psf, c = _synthetic_scene(m_true=m_true, nuc_flux=nuc, fwhm=2.8)
+    comet = pf.radial_profile(img, c, c, oversample=4, sky=100.0)
+    stack = _star_stack_from_psf(psf, c)
+
+    fit = pf.fit_coma_model(comet, stack, oversample=4)
+    assert fit["success"]
+    assert fit["m"] == pytest.approx(m_true, abs=0.12), f"m={fit['m']}"
+    if nuc > 0:
+        assert fit["nucleus_fraction"] > 0.15, fit
+    else:
+        assert fit["nucleus_fraction"] < 0.10, fit
+
+
+def test_naive_slope_is_biased_when_the_core_is_large_but_model_is_not():
+    """A strong nucleus under a wide PSF biases the naive slope steep; the
+    forward model removes it.
+
+    Calibrated numerically: with the nucleus carrying ~70% of the flux inside
+    10 px and FWHM 4.5 px, the naive fit from 1.5 FWHM outward gives ~-1.23 and
+    the model ~-0.92.  Note the size of the effect -- even this extreme case
+    cannot push the naive slope below about -1.25, which is itself a finding:
+    nucleus + PSF leakage is not how a profile gets to -2.
+    """
+    img, psf, c = _synthetic_scene(m_true=1.0, nuc_flux=40000.0, fwhm=4.5)
+    comet = pf.radial_profile(img, c, c, oversample=4, sky=100.0)
+    stack = _star_stack_from_psf(psf, c)
+
+    naive, _, _ = pf.fit_powerlaw(comet["r_pix"], comet["mean_clip"], 1.5 * 4.5, 10.0)
+    fit = pf.fit_coma_model(comet, stack, oversample=4)
+    assert naive < -1.15, f"expected the naive slope to be biased steep, got {naive}"
+    assert fit["m"] == pytest.approx(1.0, abs=0.15), f"model m={fit['m']}"
+    assert -fit["m"] > naive + 0.15, "model did not remove the bias"
+    assert fit["nucleus_fraction"] > 0.5
+
+
+def test_fixed_slope_fit_is_worse_when_slope_is_wrong():
+    img, psf, c = _synthetic_scene(m_true=1.5, nuc_flux=0.0)
+    comet = pf.radial_profile(img, c, c, oversample=4, sky=100.0)
+    stack = _star_stack_from_psf(psf, c)
+    free = pf.fit_coma_model(comet, stack, oversample=4)
+    fixed = pf.fit_coma_model(comet, stack, oversample=4, m_fixed=1.0)
+    assert fixed["chi2_red"] > 2 * free["chi2_red"]
+
+
+
+def test_sky_over_subtraction_steepens_naive_slope_and_fit_sky_recovers_it():
+    """The mechanism behind steep faint-comet profiles: the outer annuli sit
+    within a few sigma of the sky, so a small sky error tilts the whole tail.
+    Naive fit: biased.  Model with a free sky term: recovers m and the error."""
+    img, psf, c = _synthetic_scene(m_true=1.0, nuc_flux=0.0, coma_amp=40.0, fwhm=2.8)
+    # True sky is 100; subtract 102 (over-subtraction of 2 DN, ~ the outer SB).
+    comet = pf.radial_profile(img, c, c, oversample=4, sky=102.0)
+    stack = _star_stack_from_psf(psf, c)
+
+    naive, _, _ = pf.fit_powerlaw(comet["r_pix"], comet["mean_clip"], 1.5 * 2.8, 10.0)
+    plain = pf.fit_coma_model(comet, stack, oversample=4)
+    with_sky = pf.fit_coma_model(comet, stack, oversample=4, fit_sky=True)
+
+    assert naive < -1.3, f"sky error did not steepen the naive slope: {naive}"
+    assert with_sky["m"] == pytest.approx(1.0, abs=0.15), with_sky
+    assert with_sky["sky_offset"] == pytest.approx(-2.0, abs=0.7), with_sky
+    assert abs(with_sky["m"] - 1.0) < abs(plain["m"] - 1.0)
