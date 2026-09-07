@@ -40,6 +40,7 @@ dropped, so a frame that fails a cut stays in the table with the reason attached
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import warnings
 from pathlib import Path
@@ -63,6 +64,7 @@ from . import query as qry
 __all__ = [
     "build_frame_table", "attach_ephemerides", "measure_photometry",
     "calibrate", "compute_afrho", "run_photometry", "flag_contamination",
+    "aperture_scale_ok", "run_multi_aperture",
     "FLAG_COLUMNS", "CRITICAL_FLAGS", "ADVISORY_FLAGS",
 ]
 
@@ -187,6 +189,10 @@ def attach_ephemerides(table, target, progress=True):
         # Predicted total magnitude, the reference brightness the Gaia
         # contamination check compares against.
         "Tmag": "tmag", "Nmag": "nmag",
+        # Heliocentric range rate: negative inbound, positive outbound. Used to
+        # separate the pre- and post-perihelion legs of an Af-rho vs r_h curve,
+        # which otherwise fold on top of each other.
+        "r_rate": "r_rate",
     }
     for col in column_map.values():
         out[col] = np.nan
@@ -276,6 +282,40 @@ def _apcor_for_radius(row, radius_pix):
     diameter = np.clip(2.0 * radius_pix, _APCOR_DIAMETERS[good][0], _APCOR_DIAMETERS[good][-1])
     return float(np.interp(np.log(diameter),
                            np.log(_APCOR_DIAMETERS[good]), values[good]))
+
+
+def aperture_scale_ok(rho_km, delta_au, pixscale, fwhm_pix, phot_config=None):
+    """Is an aperture of *rho_km* usable on this frame?
+
+    Requires ``FWHM < r_ap < max_aperture_arcsec`` on the sky.  Below the seeing
+    FWHM the aperture does not contain the PSF, so it is not measuring the coma
+    it claims to; above an arcminute it is dominated by sky and, in a 5 arcmin
+    cutout, leaves no room for the sky annulus.
+
+    Parameters
+    ----------
+    rho_km : float
+        Aperture radius at the comet, km.
+    delta_au : float
+        Observer distance, au.
+    pixscale : float
+        Arcsec per pixel.
+    fwhm_pix : float
+        Seeing FWHM in pixels.
+
+    Returns
+    -------
+    (ok, r_arcsec, fwhm_arcsec) : tuple of bool and float
+    """
+    pc = phot_config or cfg.PhotConfig()
+    if not all(np.isfinite([rho_km, delta_au, pixscale, fwhm_pix])):
+        return False, np.nan, np.nan
+    delta_km = float(delta_au) * (1 * u.au).to_value(u.km)
+    if delta_km <= 0:
+        return False, np.nan, np.nan
+    r_arcsec = float(rho_km) / delta_km * (1 * u.rad).to_value(u.arcsec)
+    fwhm_arcsec = float(fwhm_pix) * float(pixscale)
+    return bool(fwhm_arcsec < r_arcsec < pc.max_aperture_arcsec), r_arcsec, fwhm_arcsec
 
 
 def measure_photometry(table, datadir, phot_config=None, progress=True):
@@ -717,6 +757,87 @@ def compute_afrho(table, phot_config=None):
     out["flags"] = out[FLAG_COLUMNS].apply(
         lambda r: ",".join(c.replace("flag_", "") for c in FLAG_COLUMNS if r[c]), axis=1)
     return out
+
+
+def run_multi_aperture(target, datadir=None, phot_config=None, rho_km_set=None,
+                       progress=True, save=True):
+    """Reduce one target at several aperture radii.
+
+    Af-rho depends on the aperture, so a survey measures a set of radii and
+    quotes rho with every value.  The expensive shared work -- reading headers
+    and fetching exact-time ephemerides -- is done once; only the aperture-
+    dependent steps repeat.
+
+    An aperture is measured on a frame only where
+    ``FWHM < r_ap < max_aperture_arcsec`` holds (see :func:`aperture_scale_ok`).
+    Frames failing that test for a given radius produce **no row** for it, which
+    is deliberate: the measurement would not mean what its label says.  The
+    counts are returned so nothing is lost silently.
+
+    Parameters
+    ----------
+    target : ztfcomet.config.Target
+    datadir : path-like, optional
+    phot_config : ztfcomet.config.PhotConfig, optional
+    rho_km_set : sequence of float, optional
+        Defaults to ``phot_config.rho_km_set``.
+
+    Returns
+    -------
+    table : pandas.DataFrame
+        Long format: one row per (frame, aperture), with an ``rho_km`` column.
+    skipped : dict
+        ``{rho_km: n_frames_skipped}`` from the scale test.
+    """
+    from . import directory as d
+
+    pc = phot_config or target.phot
+    rho_set = list(rho_km_set if rho_km_set is not None else pc.rho_km_set)
+    datadir = Path(datadir) if datadir else d.data_dir(target.name)
+
+    base = build_frame_table(datadir, progress=progress)
+    if base.empty:
+        log.warning("No frames for %s in %s", target.name, datadir)
+        return base, {}
+    base.insert(1, "target", target.name)
+    base = attach_ephemerides(base, target, progress=progress)
+
+    parts, skipped = [], {}
+    for rho_km in rho_set:
+        ok = np.array([
+            aperture_scale_ok(rho_km, row.get("delta"), row.get("pixscale"),
+                              row.get("fwhm_pix"), pc)[0]
+            for _, row in base.iterrows()])
+        skipped[rho_km] = int((~ok).sum())
+        if not ok.any():
+            log.info("%s: rho=%.0f km unusable on every frame (scale test)",
+                     target.name, rho_km)
+            continue
+
+        sub = base[ok].reset_index(drop=True)
+        cfg_rho = dataclasses.replace(pc, rho_km=float(rho_km))
+        sub = measure_photometry(sub, datadir, cfg_rho, progress=progress)
+        sub = flag_contamination(sub, cfg_rho, progress=progress)
+        sub = calibrate(sub, cfg_rho)
+        sub = compute_afrho(sub, cfg_rho)
+        sub["rho_km"] = float(rho_km)
+        parts.append(sub)
+        log.info("%s: rho=%5.0f km -> %d frames (%d skipped by scale test)",
+                 target.name, rho_km, len(sub), skipped[rho_km])
+
+    if not parts:
+        log.warning("%s: no aperture passed the scale test on any frame", target.name)
+        return pd.DataFrame(), skipped
+
+    table = pd.concat(parts, ignore_index=True).sort_values(["rho_km", "obsjd"])
+    table = table.reset_index(drop=True)
+
+    if save:
+        outpath = d.result_dir(target.name) / f"photometry_{d.target_slug(target.name)}.csv"
+        table.to_csv(outpath, index=False)
+        log.info("Wrote %s (%d rows, %d apertures)", outpath, len(table),
+                 table["rho_km"].nunique())
+    return table, skipped
 
 
 def run_photometry(target, datadir=None, phot_config=None, progress=True, save=True):

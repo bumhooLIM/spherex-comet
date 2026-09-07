@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import datetime
 import logging
+
+import numpy as np
 from dataclasses import dataclass, field, replace
 
 _log = logging.getLogger(__name__)
@@ -26,6 +28,10 @@ __all__ = [
 #: Default start of the survey window.  ZTF cutouts before this are not part of
 #: the current programme; override per target or with ``--start``.
 DEFAULT_START_DATE = "2025-03-01"
+
+#: Aperture radii at the comet, in km.  Af-rho is aperture-dependent, so a
+#: survey reports several and quotes rho with every value.
+RHO_KM_SET = (10_000.0, 15_000.0, 20_000.0, 30_000.0, 40_000.0)
 
 
 def today() -> str:
@@ -84,7 +90,20 @@ class QueryConfig:
         default ``vmag_max`` of 19 keeps epochs where the comet is plausibly
         detectable in a 30 s ZTF exposure (5-sigma limit ~20.5).
     cutout_size : str
-        IRSA cutout size string, e.g. ``"10arcmin"``.
+        Fixed IRSA cutout size, used when ``adaptive_cutout`` is off.
+    adaptive_cutout : bool
+        Size each target's cutouts from its own ephemeris rather than using a
+        fixed size.  A distant, faint comet needs only a small box; a bright or
+        nearby one has a coma spanning far more sky.
+    cutout_size_small, cutout_size_large : str
+        The two sizes the adaptive choice picks between.
+    bright_vmag : float
+        A target reaching this magnitude or brighter at any epoch gets the large
+        cutout.
+    close_delta_au : float
+        A target coming this close to the observer at any epoch gets the large
+        cutout: angular coma size scales as 1/delta, so a nearby comet overflows
+        a small box even when it is faint.
     is_cutout : bool
         When ``False``, full 3072x3080 quadrant images are requested instead of
         cutouts.  These are ~37 MB each; the SSD holds several such datasets.
@@ -102,6 +121,11 @@ class QueryConfig:
     vmag_max: float = 19.0
     is_cutout: bool = True
     cutout_size: str = "10arcmin"
+    adaptive_cutout: bool = True
+    cutout_size_small: str = "5arcmin"
+    cutout_size_large: str = "10arcmin"
+    bright_vmag: float = 14.0
+    close_delta_au: float = 1.0
     intersect: str = "overlaps"
     max_epochs_per_call: int = 50
     timeout: float = 120.0
@@ -118,6 +142,15 @@ class PhotConfig:
     rho_km : float
         Physical radius of the photometric aperture at the comet, in km.  Af-rho
         is aperture-dependent, so this must be reported with every result.
+    rho_km_set : tuple of float
+        Aperture radii for a multi-aperture reduction.  Each frame is measured
+        at every radius that satisfies the scale test below.
+    max_aperture_arcsec : float
+        Upper bound on the on-sky aperture radius.  Together with the seeing
+        FWHM this bounds a usable aperture:
+        ``FWHM_arcsec < r_ap_arcsec < max_aperture_arcsec``.  Below the FWHM the
+        aperture does not contain the PSF; above an arcminute it is dominated by
+        sky and, in a 5 arcmin cutout, runs out of frame.
     sky_in_scale, sky_out_scale, sky_out_pad : float
         Sky annulus geometry: ``r_in = sky_in_scale * rho_pix`` and
         ``r_out = sky_out_scale * rho_pix + sky_out_pad`` (pixels).
@@ -154,6 +187,8 @@ class PhotConfig:
     """
 
     rho_km: float = 15_000.0
+    rho_km_set: tuple = RHO_KM_SET
+    max_aperture_arcsec: float = 60.0
     sky_in_scale: float = 3.0
     sky_out_scale: float = 4.0
     sky_out_pad: float = 20.0
