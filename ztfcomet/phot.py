@@ -128,7 +128,11 @@ def build_frame_table(datadir, pattern="*.fits", progress=True):
         keywords in :data:`_HEADER_KEYS` plus ``naxis1``/``naxis2``.
     """
     datadir = Path(datadir)
-    paths = sorted(datadir.glob(pattern))
+    # macOS writes an AppleDouble sidecar "._<name>" beside every file on the
+    # exFAT SSD.  Those match the glob, are not FITS, and used to be reported
+    # as half the frames being unreadable -- which advised a pointless repair
+    # download.  They are metadata, not data: drop them before reading.
+    paths = sorted(q for q in datadir.glob(pattern) if not q.name.startswith("._"))
     if not paths:
         log.warning("No files matching %r in %s", pattern, datadir)
         return pd.DataFrame()
@@ -721,7 +725,7 @@ def compute_afrho(table, phot_config=None):
     -----
     Af-rho is aperture-dependent by construction, so ``rho_km`` must be quoted
     alongside any value from this function.  The fractional error follows from
-    :math:`\\mathrm{d}(Af\\rho)/Af\\rho = 0.4 \\ln 10 \; \\sigma_m`.
+    :math:`\\mathrm{d}(Af\\rho)/Af\\rho = 0.4 \\ln 10 \\; \\sigma_m`.
     """
     pc = phot_config or cfg.PhotConfig()
     if table.empty:
