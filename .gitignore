@@ -1,0 +1,38 @@
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+*.so
+
+# Environments
+.venv/
+env/
+*.env
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+
+# Build & dist
+build/
+dist/
+*.egg-info/
+
+# Data and outputs — large, regenerable, never committed.
+# Raw FITS live on the SSD (see ztfcomet/directory.py); these are the local
+# fallbacks. The predecessor repo tracked 36 MB of FITS in git; do not repeat it.
+# The directories themselves are kept (so a fresh clone shows the layout);
+# their contents are not.
+data/*
+results/*
+fig/*
+!data/.gitkeep
+!results/.gitkeep
+!fig/.gitkeep
+*.fits
+*.fits.part
+
+# Editor
+.vscode/
+.idea/

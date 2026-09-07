@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=70", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ztfcomet"
+version = "0.2.0"
+description = "Query and analyse ZTF (Palomar, I41) observations of comets: cutout retrieval, aperture photometry, Af-rho"
+authors = [{ name = "Bumhoo Lim", email = "bumhoo7@snu.ac.kr" }]
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+
+# Every one of these is imported by the package. The predecessor project
+# declared only astropy and numpy while importing pandas, requests, tqdm and
+# astroquery; see doc/primitive_code_analysis.md (C19).
+dependencies = [
+    "numpy>=1.24",
+    "pandas>=2.0",
+    "astropy>=6.0",
+    "astroquery>=0.4.7",
+    "photutils>=2.0",
+    "sep>=1.2",
+    "matplotlib>=3.7",
+    "requests>=2.28",
+    "tqdm>=4.60",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7", "nbstripout"]
+
+[project.urls]
+Repository = "https://github.com/bumhooLIM/ztfcomet"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["ztfcomet*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
