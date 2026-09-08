@@ -435,17 +435,23 @@ def plot_flag_comparison(census: pd.DataFrame, pairs: pd.DataFrame, paired: pd.D
     ax = axes[2]
     if len(paired):
         d = paired[(paired.status_ref == "detected") & (paired.status_oth == "detected")]
-        for i, (cmp_, g) in enumerate(d.groupby("comparison")):
+        rng = np.random.default_rng(0)
+        ticks, labels = [], []
+        # one slot per (comparison, species), a gap slot between comparisons; the tick
+        # positions are the data positions, so labels cannot drift against the points
+        for i, (cmp_, g) in enumerate(d.groupby("comparison", sort=False)):
             for j, s in enumerate(SPECIES):
+                x = i * 4 + j
                 gg = g[g.species == s]
                 if len(gg):
-                    ax.scatter(np.full(len(gg), i * 4 + j) + np.random.default_rng(0).normal(0, 0.08, len(gg)),
-                               gg.ratio, s=30, color=SP_COLORS[s], alpha=0.7,
+                    ax.scatter(np.full(len(gg), x) + rng.normal(0, 0.08, len(gg)), gg.ratio,
+                               s=30, color=SP_COLORS[s], alpha=0.7,
                                label=PRETTY[s] if i == 0 else None)
+                ticks.append(x)
+                labels.append(f"{cmp_.split(' vs ')[0]}\n{PRETTY[s]}")
         ax.axhline(1, color="k", ls="--")
-        labels = [f"{c}\n{s}" for c in d.comparison.unique() for s in SPECIES]
-        ax.set_xticks(range(len(labels)))
-        ax.set_xticklabels(labels, rotation=90, fontsize=10)
+        ax.set_xticks(ticks)
+        ax.set_xticklabels(labels, rotation=90, fontsize=11)
         ax.set(yscale="log", ylabel=f"Q / Q({ref})")
         ax.set_title("Q of groups detected under both policies", pad=14)
         ax.legend(fontsize=12)
