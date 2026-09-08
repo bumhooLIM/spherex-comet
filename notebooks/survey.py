@@ -154,8 +154,12 @@ def process(designation, args, root, prior=None):
             target, query=dataclasses.replace(target.query, **overrides))
     if args.start:
         target = dataclasses.replace(target, start_date=args.start)
-    if args.end:
-        target = dataclasses.replace(target, end_date=args.end)
+    # --end defaults to today, as its help text says.  Applying it only when
+    # given let the per-target end_date in config.py silently win: 2024E1
+    # carried 2025-10-30, so a run asking for "2025-03-01 .. present" queried
+    # ten months less than that -- including the comet's 2026-01-20 perihelion
+    # and every post-perihelion epoch.
+    target = dataclasses.replace(target, end_date=args.end or zc.config.today())
 
     entry = dict(prior) if prior else {}
     entry.update(target=target.name, designation=designation, status="running",
