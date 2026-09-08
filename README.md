@@ -12,10 +12,16 @@ of the **Gaia source flags** on contamination.
 The scientific method is unchanged: the AKARI/IRC band-fluorescence technique
 of Ootsubo et al. (2012) on a Haser coma with the Yamamoto (1981) aperture
 filling factor, solved as one **joint linear least-squares** fit across the
-2.7 / 4.3 / 4.7 µm bands.  `doc/model_concept.md` and `doc/fitting_methodology.md`
-describe the physics and the formalism; this file describes how to run the tool
-and how to read what it writes.  `doc/spherex_comspec_reconstruction.md` records
-what changed in the reconstruction and what the studies found.
+2.7 / 4.3 / 4.7 µm bands.  [`doc/model_concept.md`](doc/model_concept.md) and
+[`doc/fitting_methodology.md`](doc/fitting_methodology.md) describe the physics
+and the formalism; this file describes how to run the tool and how to read what
+it writes.  [`doc/spherex_comspec_reconstruction.md`](doc/spherex_comspec_reconstruction.md)
+records what changed in the reconstruction, what the distance-correction and
+source-flag studies found, and which placeholders to update first.
+
+The package expects to live inside the `spherex-comet-catalog` project tree
+(`data/apphot_revised/` two levels up); set `COMSPEC_ROOT` / `COMSPEC_APPHOT_DIR`
+to run it anywhere else.
 
 ---
 
