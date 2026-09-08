@@ -41,6 +41,7 @@ import argparse
 import dataclasses
 import json
 import logging
+import socket
 import sys
 import time
 import traceback
@@ -60,6 +61,14 @@ from ztfcomet import orbit
 from ztfcomet import profile as profile_mod
 
 log = logging.getLogger("ztfcomet.survey")
+
+# Last-resort guard for an unattended run.  astroquery sets its own 30 s
+# timeout and the downloader sets 120 s, but a socket that goes away silently
+# can still leave a read blocked with no timeout of its own: the run stalled
+# 54 minutes on one Horizons call at 0% CPU while the service answered other
+# clients in under a second.  A default timeout bounds every socket that does
+# not set one, so a dead peer costs minutes instead of the rest of the night.
+socket.setdefaulttimeout(300)
 
 STEPS = ("query", "download", "phot", "profile", "figures")
 DEFAULT_LIST = "doc/sx_comet_list_ver2607.xlsx"
