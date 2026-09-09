@@ -1,44 +1,50 @@
 # Handoff
 
 ## Current State
-The 68-comet survey is complete and fully reduced; PR #2 merged to `master`.
-Statistics: `doc/survey_summary_68comets.md`.
+**Blocked on hardware, mid-task.**  The T7 dropped off the bus with
+`OSError: [Errno 5] Input/output error` during the profile re-run (second
+time in a day).  `results/` is a MIX: 22 targets (2P … 240P in survey order)
+have profiles from the new optocentre code; the other 46 still have pre-fix
+profiles.  **Do not compute survey-wide profile statistics until the 46 are
+re-run.**  Photometry tables are untouched and valid.
 
-**The 1/ρ question is answered** (`doc/profile_survey_1rho.md`, driver
-`notebooks/profile_survey.py`): with the PSF core and sky modelled, the coma
-matches 1/ρ to 1–2% from ~1,500 km to the edge of coverage — 37,000–45,000 km —
-at every S/N band and every r_h from 0.6 to 6.7 au.  No turnover anywhere.
-The 24P "ρ_max ≥ 12,000 km" was coverage.  Corrected slope converges on
-m = 1.00 at S/N(10 px) > 60 (naive 1.42); per-target medians span 0.57–1.42,
-which is real comet-to-comet dispersion.
+Branch `fix/profile-peak-centring` (4 commits, not pushed):
+- `refine_centre()` in `ztfcomet/profile.py`: comet profiles now start at
+  the optocentre, not the winpos centroid.  Search disc covers winpos and
+  the ephemeris (midpoint, half-separation + 2 px, cap 4); the move guard is
+  the 99.5th percentile of the statistic's own null distribution, measured
+  per box shape through the same code path (false-positive rate 0.9%).
+  Live: 10P off-peak 21% → 0.0%, 40P 40% → 4.6%.  141 tests.
+- `survey.py` refuses to start when `ZTFCOMET_DATA` points at a missing dir.
 
-Slopes steeper than −2.5 are not measurements: 185 of 213 such frames never
-got a constrained fit, and the 28 that did correct from 2.67 to 1.24.  Rule:
-use the PSF-model + free-sky slope at S/N(10 px) > 20, off the sky bound.
-
-This is on branch `analysis/profile-survey-1rho`, not yet pushed.
+Merged today: PR #2 (survey), PR #4 (1/ρ holds to the coverage edge).
 
 ## Next Steps
-1. **Decide on the profile centring fix.**  20% of clean S/N > 5 frames were
-   excluded because the comet profile peaks off-centre; the off-peak rate
-   tracks the winpos shift from ephemeris (6% at < 0.5 px, 57% at 2–5 px).
-   Fix = peak re-centring within ±2 px in `run_profiles`, then re-run
-   `--steps profile figures` (~30 min).  Changes numbers in the merged
-   summary for 40P, 235P, 47P, 2024E1 most.  User's call.
-2. Open a PR for `analysis/profile-survey-1rho` if the note is wanted on master.
-3. Optional: tighten the sky bound in `fit_coma_model` (now 3× outer SB) — 23%
-   of fits sit on it, 42% at S/N 5–20.  A bound tied to the sky uncertainty
-   would keep more low-S/N frames constrained.
+1. Mount the T7, confirm `/Volumes/T7/data/ztf-comet` exists, then:
+   `ZTFCOMET_DATA=/Volumes/T7/data/ztf-comet python notebooks/survey.py
+   --steps profile figures --no-resume --vmag-max 20 --start 2025-03-01
+   --targets $(cat <scratch>/remaining_targets.txt)` — the 46 are 261P
+   through 2025W2; plain resume would skip them (every row is already `ok`).
+2. `notebooks/profile_survey.py`, then `profile_resolution.py --target 24P`.
+3. Before/after vs the pre-fix numbers in `doc/survey_summary_68comets.md`
+   (7,698 frames, 4,145 clean, −1.73 vs −4.39, 95.6%) and
+   `doc/profile_survey_1rho.md` (2,744 fitted, 2,118 good, 691 off-peak).
+4. Push and open the PR for `fix/profile-peak-centring`.
+5. **Follow-up to raise:** `flag_centroid` fires at 3 FWHM from the
+   ephemeris — a star-capture rule, not an aperture rule.  Among clean rows
+   the centroid shift is 5.4 px at the 99th percentile; at ρ = 10,000 km
+   (r_ap ≈ 6 px) 5.3% of clean rows are > 0.5 r_ap off and 1.4% > 1 r_ap
+   (nucleus at the aperture edge; ~30–40% low bias on a 1/ρ coma).  The
+   per-frame `recentre_shift_pix` now measures this directly.  Proposed
+   fix: centre the aperture photometry with `refine_centre` too, or add a
+   critical flag at shift > 0.5 r_ap.  Changes Afρ for a few % of rows.
 
 ## Blind Spots / Dead Ends
-- **Oversampled sub-pixels are correlated**: `n_clip` overstates independent
-  samples by ~oversample², so any χ² from the profile tables is ~16× too large.
-  Scale before thresholding, or don't threshold.
-- **The free sky can run to its bound** and the fit then reports a slope that
-  means nothing; always check `at_bound`.  16 slopes also hit the m = 3
-  ceiling.
-- **`fit_coma_model` needs an on-peak profile.**  Off-peak frames drive the
-  nucleus term to zero and the sky to its bound (seen on 2022E2).
-- A running process keeps its imported modules — restart batches after
-  package changes.  `--no-resume` rewrites every status row.  AppleDouble
-  `._` sidecars on the exFAT SSD match FITS globs; filtered in `phot.py`.
+- A sigma cut cannot guard a "max minus one sample" statistic (3σ moved
+  17.5% of pure-noise frames, calibrated 4σ still 4%); only the null
+  quantile through the same code path holds.  A fixed 2 px disc lands
+  confidently on its edge when the nucleus is further away — hence the
+  ephemeris-covering disc.
+- Gate on the survey log line, not a file mtime; `tail -1` hides pytest's exit.
+- χ² from the profile tables is ~16× too large (correlated sub-pixels).
+  The free sky can run to its bound; check `at_bound`.
