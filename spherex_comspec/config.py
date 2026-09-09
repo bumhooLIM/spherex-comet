@@ -26,7 +26,7 @@ from typing import Dict, List, Optional, Tuple
 __all__ = [
     "H_PLANCK", "C_LIGHT", "AU_M", "KM_M", "WM2UM_TO_MJY", "MJY_TO_WM2UM", "C_UM_S",
     "SPECIES", "TAU_1AU", "Band", "BANDS", "BAND_WINDOWS", "EMISSION_WINDOWS", "ALL_EM_WINDOWS",
-    "KEY_RANGES", "BAND_CARRIER", "BAND_COLORS", "EMISSION_DTYPES", "SOURCEFLAG_PRIORITY",
+    "KEY_RANGES", "H2O_HOT_RANGE", "BAND_CARRIER", "BAND_COLORS", "EMISSION_DTYPES", "SOURCEFLAG_PRIORITY",
     "RHO_TAU_REF_KM", "KAPPA_PUMP", "PLACEHOLDERS",
     "GroupingConfig", "ApertureConfig", "FlagPolicy", "ContinuumConfig", "ModelParams",
     "FitConfig", "Variant", "BASELINE_FLAGS", "DEFAULT_VARIANTS", "MAIN_VARIANT", "VARIANTS",
@@ -104,6 +104,13 @@ KEY_RANGES = {
     "CO2": dict(lo=4.20, hi=4.30, min_points=2),
     "CO":  dict(lo=4.60, hi=4.70, min_points=2),
 }
+#: Fallback coverage for H2O when the 2.7 um main band is not covered (saturated or flagged
+#: channels of bright, close comets such as 10P and 24P): the nu3-nu2 (4.63 um) and nu1-nu2
+#: (4.85 um) hot bands.  ``min_points`` channels inside ``lo``-``hi`` and ``min_points_red``
+#: of them beyond ``red_lo`` -- the 4.85 um band lies outside CO v(1-0), and that is what
+#: keeps a hot-band Q(H2O) separable from Q(CO).  Hot-band g-factors are placeholders
+#: (priority 2), so such a value is provisional and carries ``h2o_source = "hot"``.
+H2O_HOT_RANGE = dict(lo=4.55, hi=4.90, min_points=3, red_lo=4.75, min_points_red=1)
 
 BAND_CARRIER = {
     "2.7um": r"H$_2$O $\nu_3+\nu_1$+hot",
@@ -245,6 +252,8 @@ class FitConfig:
     upper_limit_sigma: float = 1.0
     drop_negative_sigma: Optional[float] = 1.0
     require_key_coverage: bool = True
+    #: use the 4.6-4.9 um hot bands for Q(H2O) when, and only when, 2.7 um is not covered
+    h2o_hot_fallback: bool = True
     bands: Optional[Tuple[str, ...]] = None
     accept_verdicts: Tuple[str, ...] = ("PASS", "WARN")
     clip_sigma: Optional[float] = None
@@ -267,7 +276,9 @@ class Variant:
     name: str
     flags: FlagPolicy = field(default_factory=FlagPolicy)
     use_distcorr: bool = True
-    error_column: str = "source_sum_err_mjy"     # or "source_sum_err_empirical_mjy"
+    #: ``source_sum_err_empirical_mjy`` (placeholder 10, applied 2026-09-09): the formal error
+    #: under-reports the annulus scatter (sky_excess_ratio ~ 1.1) and the fits ran at chi2_nu ~ 2.4
+    error_column: str = "source_sum_err_empirical_mjy"     # or "source_sum_err_mjy"
     grouping: GroupingConfig = field(default_factory=GroupingConfig)
     aperture: ApertureConfig = field(default_factory=ApertureConfig)
     continuum: ContinuumConfig = field(default_factory=ContinuumConfig)
@@ -381,10 +392,10 @@ PLACEHOLDERS: Tuple[dict, ...] = (
          role="one-sided cut biases Q upward by ~ +0.29 sigma per channel for pure noise",
          update="quantify jointly with the 1-sigma detection tier by noise injection"),
     dict(priority=10, quantity="photometric error column",
-         value="source_sum_err_mjy (Variant.error_column)",
+         value="source_sum_err_empirical_mjy (Variant.error_column; applied 2026-09-09, was source_sum_err_mjy)",
          role="the revised photometry reports sky_excess_ratio ~ 1.2, i.e. the VARIANCE plane "
               "under-reports the true scatter; this error is a lower bound",
-         update="source_sum_err_empirical_mjy, or scale by sky_excess_ratio"),
+         update="applied; a per-target sky_excess_ratio rescaling remains an option"),
     dict(priority=11, quantity="grouping thresholds",
          value="rh_tol 10 %, arc_min_drh 0.001 au, link_drh 0.05 au, manual edges for 24P / 2024E1",
          role="define what counts as one physical state; the manual groups exceed 10 % (to 18.5 %)",

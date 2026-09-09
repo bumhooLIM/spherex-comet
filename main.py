@@ -72,6 +72,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="figures: cap the per-group figures per variant")
     p.add_argument("--no-validation-figs", action="store_true")
     p.add_argument("--no-fit-figs", action="store_true")
+    p.add_argument("--study-figs", action="store_true",
+                   help="figures: also draw the per-group figures of the study variants "
+                        "(by default only the main variant gets them; studies get their summaries)")
     p.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING"])
     p.add_argument("--version", action="version", version=f"spherex_comspec {__version__}")
     return p
@@ -124,17 +127,19 @@ def main(argv: Optional[List[str]] = None) -> int:
         save_grouping_figures(epochs, gmap, assignment, main_v.aperture, main_v,
                               max_targets=None)
         for n in names:
+            per_group = (n == main_name) or args.study_figs
             save_variant_figures(VARIANTS[n], assignment, max_groups=args.max_groups,
-                                 validation=not args.no_validation_figs, fits=not args.no_fit_figs)
+                                 validation=per_group and not args.no_validation_figs,
+                                 fits=per_group and not args.no_fit_figs)
         partners = [n for n in flag_variants if n != main_name] + extra
         if partners:
             cmp = compare_variants(main_name, partners)
             fig = plot_flag_comparison(cmp["census"], cmp["pairs"], cmp["paired"], main_name)
-            savefig(fig, _dir.FIG_DIR / "flag_policy_comparison.png", dpi=200)
+            savefig(fig, _dir.STUDY_FIG_DIR / "flag_policy_comparison.png", dpi=200)
         if raw:
             dce = distcorr_effect(main_name, raw)
             fig = plot_distcorr_effect(dce["paired"], dce["band_rows"], main_name, raw)
-            savefig(fig, _dir.FIG_DIR / "distcorr_effect.png", dpi=200)
+            savefig(fig, _dir.STUDY_FIG_DIR / "distcorr_effect.png", dpi=200)
 
     log.info("%s finished in %.1f min", args.stage, (time.time() - t0) / 60)
     return 0

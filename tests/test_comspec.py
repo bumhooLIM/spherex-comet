@@ -30,7 +30,8 @@ from spherex_comspec.fitting import fit_production_rates, build_design_matrix  #
 from spherex_comspec.continuum import process_group, rebuild_continuum  # noqa: E402
 
 HAVE_DATA = (_dir.APPHOT_DIR / "24P.csv").is_file()
-HAVE_OLD = (_dir.ROOT / "results" / "phase_update_map.csv").is_file()
+OLD_MAP = _dir.ROOT / "data" / "reference" / "phase_update_map_previous.csv"
+HAVE_OLD = OLD_MAP.is_file()
 
 
 # --------------------------------------------------------------------- physics limits
@@ -118,6 +119,23 @@ def test_fit_reports_a_group_with_no_surviving_channel():
     assert filling_factor(np.array([])).size == 0
 
 
+def test_h2o_falls_back_to_hot_bands_only_without_the_main_band():
+    """With the 2.7 um channels absent the 4.6-4.9 um hot bands carry Q(H2O), labelled "hot";
+    with them present the main band anchors it ("main"); with the fallback off it is not covered."""
+    pts, p, _ = _synthetic_points()
+    cfg = FitConfig(drop_negative_sigma=None)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        full = fit_production_rates(pts, p, cfg)
+        no27 = fit_production_rates(pts[pts.band != "2.7um"].reset_index(drop=True), p, cfg)
+        off = fit_production_rates(pts[pts.band != "2.7um"].reset_index(drop=True), p,
+                                   FitConfig(drop_negative_sigma=None, h2o_hot_fallback=False))
+    assert full.h2o_source == "main" and full.h2o_anchored
+    assert no27.h2o_source == "hot" and not no27.h2o_anchored and no27.covered[0]
+    assert np.isfinite(no27.Q_fit[0]) and "hot bands" in "; ".join(no27.caveats())
+    assert off.h2o_source == "none" and not off.covered[0]
+
+
 def test_default_variants_are_well_formed():
     """The driver selects study partners by role, so the registry must have unique names,
     exactly one main variant, and that one must be MAIN_VARIANT."""
@@ -135,7 +153,7 @@ def test_regrouping_reproduces_the_old_map():
         return
     from spherex_comspec.grouping import regroup_all
     _, gmap, _, _ = regroup_all(["24P", "2024E1", "10P", "172P"], GroupingConfig())
-    old = pd.read_csv(_dir.ROOT / "results" / "phase_update_map.csv")
+    old = pd.read_csv(OLD_MAP)
     for t in ("24P", "2024E1", "10P", "172P"):
         o, n = old[old.target == t], gmap[gmap.target == t]
         assert len(o) == len(n), t

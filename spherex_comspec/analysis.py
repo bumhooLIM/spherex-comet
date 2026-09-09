@@ -64,6 +64,9 @@ def variant_census(variant: str) -> dict:
             out[f"n_robust_{s}"] = int((det[f"Q_{s}_n_eff"] >= _ROBUST_NEFF).sum())
             out[f"n_ul_{s}"] = int(f[f"Q_{s}_status"].isin(["upper_limit", "negative_fit"]).sum())
             out[f"median_relerr_{s}"] = float((det[f"Q_{s}_err"] / det[f"Q_{s}"]).median()) if len(det) else np.nan
+            if s == "H2O" and "h2o_source" in det:
+                out["n_det_H2O_hot"] = int((det.h2o_source == "hot").sum())
+                out["n_robust_H2O_hot"] = int(((det.h2o_source == "hot") & (det.Q_H2O_n_eff >= _ROBUST_NEFF)).sum())
         else:
             out.update({f"n_det_{s}": 0, f"n_robust_{s}": 0, f"n_ul_{s}": 0, f"median_relerr_{s}": np.nan})
     return out
@@ -198,16 +201,16 @@ def write_analysis(main: str, flag_variants: Sequence[str], raw_variant: Optiona
     out = {}
     others = [v for v in flag_variants if v != main] + [v for v in extra_variants if v != main]
     cmp = compare_variants(main, others)
-    cmp["census"].to_csv(_dir.RESULT_DIR / "flag_policy_census.csv", index=False)
-    cmp["pairs"].to_csv(_dir.RESULT_DIR / "flag_policy_pairs.csv", index=False)
-    cmp["paired"].to_csv(_dir.RESULT_DIR / "flag_policy_paired_Q.csv", index=False)
+    cmp["census"].to_csv(_dir.STUDY_RESULT_DIR / "flag_policy_census.csv", index=False)
+    cmp["pairs"].to_csv(_dir.STUDY_RESULT_DIR / "flag_policy_pairs.csv", index=False)
+    cmp["paired"].to_csv(_dir.STUDY_RESULT_DIR / "flag_policy_paired_Q.csv", index=False)
     out["flags"] = cmp
     if raw_variant:
         dce = distcorr_effect(main, raw_variant)
-        dce["summary"].to_csv(_dir.RESULT_DIR / "distcorr_effect_summary.csv", index=False)
-        dce["paired"].to_csv(_dir.RESULT_DIR / "distcorr_effect_paired_Q.csv", index=False)
-        dce["band_rows"].to_csv(_dir.RESULT_DIR / "distcorr_effect_band_rows.csv", index=False)
-        dce["verdicts"].to_csv(_dir.RESULT_DIR / "distcorr_effect_verdicts.csv")
+        dce["summary"].to_csv(_dir.STUDY_RESULT_DIR / "distcorr_effect_summary.csv", index=False)
+        dce["paired"].to_csv(_dir.STUDY_RESULT_DIR / "distcorr_effect_paired_Q.csv", index=False)
+        dce["band_rows"].to_csv(_dir.STUDY_RESULT_DIR / "distcorr_effect_band_rows.csv", index=False)
+        dce["verdicts"].to_csv(_dir.STUDY_RESULT_DIR / "distcorr_effect_verdicts.csv")
         out["distcorr"] = dce
     pt = placeholder_table()
     pt.to_csv(_dir.RESULT_DIR / "placeholders.csv", index=False)

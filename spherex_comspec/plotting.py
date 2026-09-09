@@ -339,11 +339,13 @@ def plot_fit(fit, points: pd.DataFrame, curves: dict, fit_cfg):
             qtxt.append(f"Q({PRETTY[s]}) = {fit.Q[k]:.2e} $\\pm$ {fit.Q_err[k]:.1e}")
     fig.suptitle(f"{fit.target}   phase {fit.phase}   $r_{{ap}}$ = {fit.r_ap_km:,.0f} km   "
                  f"$\\langle r_h \\rangle$ = {fit.geometry['r_hel_mean']:.3f} au", y=1.15)
-    anchor = "" if fit.h2o_anchored else "   |   H$_2$O NOT anchored at 2.7 µm"
+    anchor = ("" if fit.h2o_source == "main" else
+              "   |   H$_2$O from 4.6–4.9 µm hot bands (2.7 µm not covered)" if fit.h2o_source == "hot"
+              else "   |   H$_2$O not covered")
     dropped = f"   |   {fit.n_dropped_negative} channel(s) excluded" if fit.n_dropped_negative else ""
     fig.text(0.5, 1.045, "      ".join(qtxt) + r"   [s$^{-1}$]", ha="center", fontsize=16)
     fig.text(0.5, 1.005, f"$\\chi^2_\\nu$ = {fit.chi2_red:.1f}{anchor}{dropped}", ha="center",
-             fontsize=15, color="k" if fit.h2o_anchored else "tab:red")
+             fontsize=15, color="k" if fit.h2o_source == "main" else "tab:orange" if fit.h2o_source == "hot" else "tab:red")
     handles = [
         plt.Line2D([], [], color="k", marker="o", ls="none", ms=10, label="fitted channels"),
         plt.Line2D([], [], color="tab:red", marker="x", ls="none", ms=13, mew=3.5,
@@ -370,12 +372,18 @@ def plot_summary_Q(fits: pd.DataFrame, title: str = ""):
     for ax, s in zip(axes, SPECIES):
         det = fits[(fits[f"Q_{s}_status"] == "detected") & (fits[f"Q_{s}_n_eff"] >= 2)]
         lim = fits[fits[f"Q_{s}_status"].isin(["upper_limit", "negative_fit"])]
+        hot = (det.h2o_source == "hot") if (s == "H2O" and "h2o_source" in det) else pd.Series(False, index=det.index)
         for i, ap in enumerate(aps):
-            dd = det[det.r_ap_km == ap]
+            dd = det[(det.r_ap_km == ap) & ~hot]
             if len(dd):
                 ax.errorbar(dd.r_hel_mean, dd[f"Q_{s}"], yerr=dd[f"Q_{s}_err"], fmt=mk[i % 5],
                             ms=10, lw=1.5, capsize=4, color=SP_COLORS[s],
                             label=f"detected, {ap / 1000:.0f}k km")
+            hh = det[(det.r_ap_km == ap) & hot]
+            if len(hh):
+                ax.errorbar(hh.r_hel_mean, hh[f"Q_{s}"], yerr=hh[f"Q_{s}_err"], fmt=mk[i % 5],
+                            ms=10, lw=1.5, capsize=4, color=SP_COLORS[s], mfc="none", mew=2,
+                            label=f"from hot bands (2.7 µm not covered), {ap / 1000:.0f}k km")
             uu = lim[lim.r_ap_km == ap]
             if len(uu):
                 ax.errorbar(uu.r_hel_mean, uu[f"Q_{s}_upper_limit"],
@@ -395,10 +403,17 @@ def plot_mixing_ratios(fits: pd.DataFrame, title: str = ""):
     fig, axes = plt.subplots(1, 2, figsize=(22, 8))
     for ax, num in zip(axes, ("CO2", "CO")):
         g = fits[(fits[f"Q_{num}_status"] == "detected") & (fits.Q_H2O_status == "detected")
-                 & fits.h2o_anchored & (fits[f"{num}_H2O"] > 0)
+                 & (fits[f"{num}_H2O"] > 0)
                  & (fits[f"Q_{num}_n_eff"] >= 2) & (fits.Q_H2O_n_eff >= 2)]
-        ax.errorbar(g.r_hel_mean, 100 * g[f"{num}_H2O"], yerr=100 * g[f"{num}_H2O_err"], fmt="o",
-                    ms=11, lw=1.5, capsize=4, color="tab:purple")
+        hot = (g.h2o_source == "hot") if "h2o_source" in g else pd.Series(False, index=g.index)
+        gm, gh = g[~hot], g[hot]
+        ax.errorbar(gm.r_hel_mean, 100 * gm[f"{num}_H2O"], yerr=100 * gm[f"{num}_H2O_err"], fmt="o",
+                    ms=11, lw=1.5, capsize=4, color="tab:purple", label="H$_2$O from the 2.7 µm band")
+        if len(gh):
+            ax.errorbar(gh.r_hel_mean, 100 * gh[f"{num}_H2O"], yerr=100 * gh[f"{num}_H2O_err"], fmt="o",
+                        ms=11, lw=1.5, capsize=4, color="tab:purple", mfc="none", mew=2,
+                        label="H$_2$O from hot bands (2.7 µm not covered)")
+        ax.legend(fontsize=13, loc="lower right")
         ax.axhspan(2, 20, color="0.85", zorder=0)
         ax.text(0.02, 0.95, "2-20 %: the range other comets occupy", transform=ax.transAxes,
                 fontsize=14, color="0.35", va="top")

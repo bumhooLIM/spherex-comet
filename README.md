@@ -1,7 +1,7 @@
 # `spherex-comspec` — gas production rates from SPHEREx comet spectrophotometry
 
 An end-to-end model from the revised aperture photometry of the SPHEREx comet
-catalog (`data/apphot_revised/`, produced by `spherex_apphot`) to production
+catalog (`data/apphot/`, produced by `spherex_apphot`) to production
 rates of H₂O, CO₂ and CO per comet and observing phase.  It reconstructs, as a
 single package, what the project notebooks `phase_group_update.ipynb`,
 `continuum_subtraction.ipynb` and `gas_emission_fit.ipynb` (with `emission-fitter/`)
@@ -20,7 +20,7 @@ records what changed in the reconstruction, what the distance-correction and
 source-flag studies found, and which placeholders to update first.
 
 The package expects to live inside the `spherex-comet-catalog` project tree
-(`data/apphot_revised/` two levels up); set `COMSPEC_ROOT` / `COMSPEC_APPHOT_DIR`
+(`data/apphot/` two levels up); set `COMSPEC_ROOT` / `COMSPEC_APPHOT_DIR`
 to run it anywhere else.
 
 ---
@@ -62,8 +62,8 @@ python main.py run --variants dc_main --targets 24P 2P   # a quick look
 python tests/test_comspec.py
 ```
 
-`group` writes `data/comspec/phase_assignment.csv` (one row per exposure) and
-`results/comspec/phase_map.csv` (one row per group) and is shared by every
+`group` writes `data/phase_assignment.csv` (one row per exposure) and
+`results/phase_map.csv` (one row per group) and is shared by every
 variant.  **The photometry tables are never modified.**
 
 ## The pipeline
@@ -94,7 +94,7 @@ sky annulus, so the rule aperture can be missing for a distant target — 2014 U
 at 14.6 au has no 40 000 km measurement at all.  When the rule aperture covers
 fewer than 95 % of a target's exposures, the smallest larger `km` aperture that
 does is used and logged: 2014 UN271 → 80 000 km; 2019 U5, 2022 R3, 2023 RS61
-→ 60 000 km.  `results/comspec/<variant>/apertures.csv` records the choice.
+→ 60 000 km.  `results/apertures.csv` records the choice.
 
 ### 3. Flag policy (`config.FlagPolicy`, `dataio.select_spectrum`)
 
@@ -124,6 +124,18 @@ diagnostic `KEY_RANGES` (H₂O ≥ 3 channels in 2.60–2.80 µm, CO₂ ≥ 2 in
 *not detected*.  `n_eff` (the participation ratio of the per-channel Fisher
 information) says how many channels really carry a species; require ≥ 2.
 
+
+**H₂O coverage rule.**  Q(H₂O) is anchored by the 2.7 µm main band (≥ 3 channels
+in 2.60–2.80 µm).  Only when that band is *not covered* — the bright, close comets
+such as 10P and 24P lose those channels to saturation and flags — do the 4.63 and
+4.85 µm hot bands carry Q(H₂O) (`config.H2O_HOT_RANGE`: ≥ 3 channels in
+4.55–4.90 µm, at least one beyond 4.75 µm so the value is separable from CO).  The
+row then carries `h2o_source = "hot"`, the caveat says so, and the figures draw it
+with an open marker; `FitConfig.h2o_hot_fallback=False` switches the rule off.
+Hot-band g-factors are placeholders, so such values are provisional.
+
+**Errors.**  The fit uses `source_sum_err_empirical_mjy` (`Variant.error_column`,
+placeholder 10 applied): the formal error under-reports the annulus scatter.
 ## Distance correction — how Q stays physical
 
 The revised photometry carries `flux_distcorr_mjy = F × r_h² × Δ²`, the flux the
@@ -162,8 +174,8 @@ the groups detected in both spaces; 0.48 for the 2026-09-08 baseline).
 | `dc_main_strict` | badphot | baseline but any bad pixel drops the row | distance-corrected | badphot-policy study |
 | `dc_all` | previous | strict `badphot`, every flag kept (the 2026-09-08 baseline) | distance-corrected | before/after the placeholder switch |
 
-Each variant is a complete, independent run under `data/comspec/<variant>/emission/`,
-`results/comspec/<variant>/` and `fig/comspec/<variant>/`.  A variant's `hash`
+Each variant is a complete, independent run under `data/emission/`, `results/` and `fig/` for the main variant and under
+`studies/<variant>/` for every other one.  A variant's `hash`
 (written to `run.meta.json`) identifies its full parameter set.  `config.VARIANTS`
 maps each name to its `Variant`, so a script drives one directly:
 `run_variant(VARIANTS["dc_main"])`, `save_variant_figures(VARIANTS["dc_main_strict"], assignment)`.
@@ -174,14 +186,16 @@ The driver picks each study's partners by `Variant.role` (`main`, `flags`, `dist
 
 | path | content |
 |---|---|
-| `data/comspec/phase_assignment.csv` | `target, filename, obsid, jd_utc, epoch, arc, phase, manual` per exposure |
-| `results/comspec/phase_map.csv` | one row per phase group: r_h / r_obs / timing / band-sampling statistics |
-| `data/comspec/<v>/emission/<target>_<ap>km.csv` | per-band continuum summary (verdict, provenance, coefficients + covariance) |
-| `data/comspec/<v>/emission/<target>_<ap>km_points.csv` | point-level spectrum: `flux`/`err` in the fit space, `emis_*` and `emis_raw_*`, `role`, flags |
-| `results/comspec/<v>/gas_fit.csv` | **one row per (target, phase): Q, errors, limits, coverage, n_eff, mixing ratios, caveats** |
-| `results/comspec/<v>/gas_fit_lines/` | dense model curves and per-channel residuals per fit |
-| `results/comspec/<v>/continuum_summary.csv`, `skipped_groups.csv`, `not_fitted.csv`, `apertures.csv`, `run.meta.json` | provenance |
-| `results/comspec/flag_policy_*.csv`, `distcorr_effect_*.csv`, `placeholders.csv` | the cross-variant studies |
+| `data/phase_assignment.csv` | `target, filename, obsid, jd_utc, epoch, arc, phase, manual` per exposure |
+| `results/phase_map.csv` | one row per phase group: r_h / r_obs / timing / band-sampling statistics |
+| `data/emission/<target>_<ap>km.csv` | per-band continuum summary (verdict, provenance, coefficients + covariance) |
+| `data/emission/<target>_<ap>km_points.csv` | point-level spectrum: `flux`/`err` in the fit space, `emis_*` and `emis_raw_*`, `role`, flags |
+| `results/gas_fit.csv` | **one row per (target, phase): Q, errors, limits, coverage, n_eff, mixing ratios, caveats** |
+| `results/gas_fit_lines/` | dense model curves and per-channel residuals per fit |
+| `results/continuum_summary.csv`, `skipped_groups.csv`, `not_fitted.csv`, `apertures.csv`, `run.meta.json` | provenance |
+| `data/studies/<v>/`, `results/studies/<v>/`, `fig/studies/<v>/` | the same products for every study variant |
+| `results/studies/flag_policy_*.csv`, `distcorr_effect_*.csv`; `fig/studies/*.png` | the cross-variant studies |
+| `results/placeholders.csv` | the placeholder registry as a table |
 
 `phase` in every file is the regrouped phase; `epoch` is its 28-day parent.
 Pin `dtype={"target": str}` when reading: `2022E2` and `2024E1` are valid
@@ -196,7 +210,7 @@ scientific notation.
 | `Q_X_status` | `detected` / `upper_limit` / `negative_fit` / `not_covered` |
 | `Q_X_upper_limit` | the k-σ limit where the status is not `detected` |
 | `Q_X_n_eff` | effective channel count — **read before believing a small error** |
-| `h2o_anchored` | `False` ⇒ Q(H₂O) and Q(CO) come from the same blended 4.6–4.9 µm feature |
+| `h2o_source`, `h2o_anchored` | `main`: Q(H₂O) rests on the 2.7 µm band; `hot`: on the 4.6–4.9 µm hot bands only (2.7 µm not covered; provisional, open markers in the figures); `none`: not covered |
 | `CO2_H2O`, `CO_H2O` (+ `_err`) | mixing ratios with the covariance term |
 | `fit_space`, `distcorr_factor_mean` | the space of the solve (always physical) and the group's mean factor |
 | `n_flag_a`, `n_flag_b` | flagged channels that entered the fit |
@@ -211,7 +225,7 @@ the band profiles, the expansion-velocity law, the 2.7 µm blue edge, the
 the polynomial orders, the 1σ detection
 tier, the negative-channel cut, the error column, the grouping thresholds, the
 sufficiency gates, the opacity calibration, T_rot and the upstream flag
-thresholds.  `results/comspec/placeholders.csv` is the same table; the
+thresholds.  `results/placeholders.csv` is the same table; the
 reconstruction document says which ones must be updated first.
 
 ## Tests

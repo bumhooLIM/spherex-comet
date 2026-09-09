@@ -40,7 +40,7 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
-from .config import KEY_RANGES, SPECIES, FitConfig, ModelParams
+from .config import H2O_HOT_RANGE, KEY_RANGES, SPECIES, FitConfig, ModelParams
 from .gasmodel import amplitude_per_unit_Q, hires_grid, species_shape_mjy, spectrum_mjy
 from .instrument import bandpass_matrix
 
@@ -138,20 +138,25 @@ class FitResult:
     params: ModelParams | None = None
     config: FitConfig | None = None
 
+    #: "main" (2.7 um band), "hot" (4.6-4.9 um hot bands only) or "none"
+    h2o_source: str = "none"
+    n_hot_H2O: int = 0
+
     @property
     def chi2_red(self) -> float:
         return self.chi2 / self.dof if self.dof > 0 else np.nan
 
     @property
     def h2o_anchored(self) -> bool:
-        """True when the 2.7 um band is in the fit; without it Q(H2O) and Q(CO) are degenerate."""
-        return "2.7um" in self.bands_used
+        """True when Q(H2O) rests on the 2.7 um main band; a hot-band value is not anchored."""
+        return self.h2o_source == "main"
 
     def caveats(self) -> list:
         out = []
-        if not self.h2o_anchored:
-            out.append("Q(H2O) not anchored at 2.7 um: constrained only by the 4.6-4.9 um hot "
-                       "bands, degenerate with Q(CO)")
+        if self.h2o_source == "hot":
+            out.append(f"Q(H2O) from the 4.6-4.9 um hot bands only ({self.n_hot_H2O} channels; 2.7 um "
+                       "not covered): provisional -- hot-band g-factors are placeholders and the "
+                       "feature is shared with CO v(1-0)")
         for k, s in enumerate(self.species):
             if not self.covered[k]:
                 r = KEY_RANGES.get(s)
@@ -197,7 +202,8 @@ class FitResult:
     def to_row(self) -> dict:
         row = dict(target=self.target, r_ap_km=self.r_ap_km, phase=self.phase,
                    n_points=self.n_points, bands_used="+".join(self.bands_used),
-                   h2o_anchored=self.h2o_anchored, fit_space=self.space,
+                   h2o_anchored=self.h2o_anchored, h2o_source=self.h2o_source,
+                   n_hot_H2O=self.n_hot_H2O, fit_space=self.space,
                    chi2=self.chi2, dof=self.dof, chi2_red=self.chi2_red,
                    err_scale=self.err_scale, **self.geometry)
         row["n_dropped_negative"] = self.n_dropped_negative
@@ -276,8 +282,26 @@ def fit_production_rates(points: pd.DataFrame, params: ModelParams,
     else:
         col_max = np.abs(A).max(axis=0) if len(A) else np.zeros(len(species))
         covered = col_max > (col_max.max() * 1e-6 if col_max.max() > 0 else np.inf)
+    # H2O: the 2.7 um main band anchors the fit; only when it is not covered do the 4.6-4.9 um
+    # hot bands carry Q(H2O), and the result is labelled so downstream (bright, close comets
+    # such as 10P and 24P lose the 2.7 um channels to saturation and flags).
+    h2o_source, n_hot = "none", 0
+    if "H2O" in species:
+        k = species.index("H2O")
+        wl = pts["wl"].to_numpy(dtype=float)
+        hr = H2O_HOT_RANGE
+        n_hot = int(((wl >= hr["lo"]) & (wl <= hr["hi"])).sum())
+        n_red = int(((wl >= hr["red_lo"]) & (wl <= hr["hi"])).sum())
+        if covered[k]:
+            h2o_source = "main"
+        elif (cfg.h2o_hot_fallback and cfg.require_key_coverage
+              and n_hot >= hr["min_points"] and n_red >= hr["min_points_red"]):
+            covered[k] = True
+            h2o_source = "hot"
     if len(A):
         covered &= np.abs(A).max(axis=0) > 0
+    if "H2O" in species and not covered[species.index("H2O")]:
+        h2o_source = "none"
 
     n_free = int(covered.sum())
     Q_fit = np.full(len(species), np.nan)
@@ -354,6 +378,7 @@ def fit_production_rates(points: pd.DataFrame, params: ModelParams,
         chi2=chi2, dof=dof, n_points=int(len(y)),
         bands_used=tuple(sorted(pts["band"].unique())) if len(pts) else (),
         covered=covered, n_key=n_key, n_eff=n_eff, status=status, upper_limit=is_ul,
+        h2o_source=h2o_source, n_hot_H2O=n_hot,
         Q_limit=Q_limit, err_scale=scale, n_dropped_negative=n_dropped_neg, space=space,
         geometry=geom, params=params, config=cfg)
 
