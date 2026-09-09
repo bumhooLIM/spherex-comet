@@ -81,7 +81,8 @@ class ProfileConfig:
                  maxiters=5, max_stars=20, snr_min=10.0, saturation_fraction=0.8,
                  detect_sigma=5.0, exclude_comet_pix=30.0, min_pixels=3,
                  fit_rmin_fwhm=1.5, fit_rmax_pix=10.0, star_isolation_pix=None,
-                 oversample_stars=True):
+                 oversample_stars=True, recentre=True, recentre_search_pix=2.0,
+                 recentre_smooth_pix=0.5, recentre_min_snr=3.0):
         self.radii = np.asarray(DEFAULT_RADII if radii is None else radii, float)
         self.half_width = float(half_width)
         self.oversample = int(oversample)
@@ -98,6 +99,12 @@ class ProfileConfig:
         # Profile the field stars on the same oversampled grid as the comet, so
         # the two are strictly like-for-like. Off, stars use native pixels.
         self.oversample_stars = bool(oversample_stars)
+        # Re-centre the comet on its optocentre before profiling; see
+        # refine_centre for why the windowed centroid is not it.
+        self.recentre = bool(recentre)
+        self.recentre_search_pix = float(recentre_search_pix)
+        self.recentre_smooth_pix = float(recentre_smooth_pix)
+        self.recentre_min_snr = float(recentre_min_snr)
         # Another source inside this radius disqualifies a star; default is the
         # outer annulus edge plus a margin, so the profile is never blended.
         self.star_isolation_pix = (float(star_isolation_pix) if star_isolation_pix
@@ -383,6 +390,11 @@ def profile_frame(path, x, y, sky, gain, readnoise, saturate, fwhm_pix,
         sub, stars, pc, oversample=pc.oversample if pc.oversample_stars else 1)
 
     sky_level = float(sky) if np.isfinite(sky) else float(bkg.globalback)
+    cen = (refine_centre(data, x, y, search_pix=pc.recentre_search_pix,
+                         smooth_pix=pc.recentre_smooth_pix, oversample=pc.oversample,
+                         min_snr=pc.recentre_min_snr)
+           if pc.recentre else dict(x=float(x), y=float(y), shift_pix=0.0, snr=np.nan, refined=False))
+    x, y = cen["x"], cen["y"]
     comet = radial_profile(data, x, y, pc.radii, pc.half_width, sky=sky_level,
                            oversample=pc.oversample, sigma=pc.sigma, maxiters=pc.maxiters,
                            min_pixels=pc.min_pixels)
@@ -409,6 +421,8 @@ def profile_frame(path, x, y, sky, gain, readnoise, saturate, fwhm_pix,
     idx = int(np.argmin(np.abs(comet["r_pix"].to_numpy() - r_ex)))
     summary = dict(
         central_sb=c0, sky=sky_level,
+        x_profile=x, y_profile=y, recentre_shift_pix=cen["shift_pix"],
+        recentre_snr=cen["snr"], recentred=cen["refined"],
         n_stars=int(stack["n_stars"].max()) if len(stack) else 0,
         n_stars_selected=int(len(stars)),
         slope_comet=slope_c, slope_comet_unclipped=slope_u, slope_star=slope_s,
@@ -417,6 +431,101 @@ def profile_frame(path, x, y, sky, gain, readnoise, saturate, fwhm_pix,
         excess_at_3fwhm=float(comet["excess"].iloc[idx]),
     )
     return comet, stack, per_star, summary
+
+
+# ------------------------------------------------------------ optocentre
+def refine_centre(data, x, y, search_pix=2.0, smooth_pix=0.5, oversample=4, min_snr=3.0):
+    """Move a comet's profile centre from the windowed centroid to the optocentre.
+
+    The photometry centroid is ``sep.winpos``: a Gaussian-windowed centroid,
+    the right estimator for a star and the wrong one for a coma.  A 1/rho coma
+    is far heavier-winged than a Gaussian, so any asymmetry inside the window
+    -- a fan, a tail, the sunward gradient -- pulls the centroid off the
+    nucleus.  Across the survey the comet profile peaked outside its innermost
+    annulus in 19% of clean frames, rising from 6% when winpos had moved
+    < 0.5 px from the ephemeris to 57% when it had moved 2-5 px, while the
+    field stars (centred by sep on the same frames) never did.  A profile
+    centred off the peak starts with a rising inner segment, and the
+    PSF-convolved model's nucleus term then has nothing to fit.
+
+    The optocentre is the maximum of the oversampled cutout after a light
+    Gaussian smoothing, searched within *search_pix* of the input position and
+    refined to sub-pixel precision with a 3x3 quadratic.  The input position is
+    kept unless that maximum exceeds the value at the input by *min_snr* times
+    the smoothed noise: a faint comet's noise peak is not a better centre than
+    its centroid, and a comet already on its peak is left alone.
+
+    Parameters
+    ----------
+    data : ndarray
+        Image in DN; NaN pixels are replaced by the local median.
+    x, y : float
+        Starting centre, native 0-based pixel coordinates.
+    search_pix, smooth_pix : float
+        Search radius and Gaussian sigma, both in native pixels.
+    oversample : int
+        Zoom factor; use the same one as :func:`radial_profile` so the two
+        agree on where sub-pixels sit.
+    min_snr : float
+        Contrast, in units of smoothed noise, required to move the centre.
+
+    Returns
+    -------
+    dict
+        ``x``, ``y`` (native coordinates), ``shift_pix``, ``snr`` (the contrast
+        found, whether or not it justified a move), ``refined``.
+    """
+    from scipy import ndimage
+
+    os_ = int(oversample)
+    keep = dict(x=float(x), y=float(y), shift_pix=0.0, snr=np.nan, refined=False)
+    half = int(np.ceil(search_pix + 3.0 * smooth_pix + 2.0))
+    xi, yi = int(round(x)), int(round(y))
+    x0, y0 = max(xi - half, 0), max(yi - half, 0)
+    x1, y1 = min(xi + half + 1, data.shape[1]), min(yi + half + 1, data.shape[0])
+    box = np.asarray(data[y0:y1, x0:x1], float)
+    if box.shape[0] < 5 or box.shape[1] < 5 or not np.isfinite(box).any():
+        return keep
+    box = np.where(np.isfinite(box), box, np.nanmedian(box))
+
+    # Same zoom as radial_profile: sub-pixel j sits at native (j + 0.5)/os - 0.5.
+    z = ndimage.zoom(box, os_, order=1, grid_mode=True, mode="nearest")
+    z = ndimage.gaussian_filter(z, smooth_pix * os_)
+    jj, ii = np.meshgrid(np.arange(z.shape[1]), np.arange(z.shape[0]))
+    px = x0 + (jj + 0.5) / os_ - 0.5
+    py = y0 + (ii + 0.5) / os_ - 0.5
+    rr = np.hypot(px - x, py - y)
+
+    # Noise of the smoothed image, from the ring outside the search radius
+    # with the coma's own gradient removed by a broad high-pass: on a bright
+    # comet the raw ring scatter is the gradient, not the noise.
+    hp = z - ndimage.gaussian_filter(z, 2.0 * os_)
+    ring = hp[rr > search_pix + smooth_pix]
+    if ring.size < 20:
+        return keep
+    noise = 1.4826 * float(np.median(np.abs(ring - np.median(ring))))
+    inside = rr <= search_pix
+    if not inside.any() or not np.isfinite(noise) or noise <= 0:
+        return keep
+
+    i0, j0 = np.unravel_index(int(np.argmax(np.where(inside, z, -np.inf))), z.shape)
+    ic = int(np.argmin(np.abs(py[:, 0] - y)))
+    jc = int(np.argmin(np.abs(px[0, :] - x)))
+    snr = (z[i0, j0] - z[ic, jc]) / noise
+    keep["snr"] = float(snr)
+    if snr < min_snr:
+        return keep
+
+    def _parabola(fm, f0, fp):
+        d = fm - 2.0 * f0 + fp
+        return float(np.clip((fm - fp) / (2.0 * d), -0.5, 0.5)) if d < 0 else 0.0
+
+    di = _parabola(z[i0 - 1, j0], z[i0, j0], z[i0 + 1, j0]) if 0 < i0 < z.shape[0] - 1 else 0.0
+    dj = _parabola(z[i0, j0 - 1], z[i0, j0], z[i0, j0 + 1]) if 0 < j0 < z.shape[1] - 1 else 0.0
+    xn = x0 + (j0 + dj + 0.5) / os_ - 0.5
+    yn = y0 + (i0 + di + 0.5) / os_ - 0.5
+    return dict(x=float(xn), y=float(yn), shift_pix=float(np.hypot(xn - x, yn - y)),
+                snr=float(snr), refined=True)
 
 
 # ------------------------------------------------------- PSF-convolved model
@@ -604,7 +713,7 @@ def run_profiles(target, table, datadir, profile_config=None, progress=True,
     target : ztfcomet.config.Target
     table : pandas.DataFrame
         Photometry table.  Only one row per frame is used (the smallest
-        aperture), for the centroid and sky level.
+        aperture), for the starting centroid and the sky level.
     datadir : path-like
     plots : bool
         Per-frame figures into ``fig/<target>/profile/`` plus one summary.
