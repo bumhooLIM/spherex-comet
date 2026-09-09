@@ -18,12 +18,12 @@ Everything, all default variants::
 
 Only the main variant, then its figures::
 
-    python main.py run --variants dc_all
-    python main.py figures --variants dc_all
+    python main.py run --variants dc_main
+    python main.py figures --variants dc_main
 
 Two targets, for a quick look::
 
-    python main.py run --variants dc_all --targets 24P 2P
+    python main.py run --variants dc_main --targets 24P 2P
 """
 
 from __future__ import annotations
@@ -41,6 +41,24 @@ from spherex_comspec import __version__  # noqa: E402
 from spherex_comspec import directory as _dir  # noqa: E402
 from spherex_comspec.config import MAIN_VARIANT, VARIANTS  # noqa: E402
 from spherex_comspec.logging_utils import get_logger, setup_logging  # noqa: E402
+
+
+def _studies(names):
+    """
+    Which selected variants play which part in the cross-variant studies, by role.
+
+    Returns ``(main, flag_variants, raw, extra)``: the flag census compares ``main`` with
+    the ``flags`` runs, the distance-correction study pairs it with the ``distcorr`` run,
+    and the ``badphot`` / ``previous`` runs join the census as extra comparisons.
+    """
+    main_name = MAIN_VARIANT if MAIN_VARIANT in names else names[0]
+
+    def role(r):
+        return [n for n in names if VARIANTS[n].role == r and n != main_name]
+
+    raw = role("distcorr")
+    return main_name, [main_name] + role("flags"), (raw[0] if raw else None), \
+        role("badphot") + role("previous")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -86,10 +104,8 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     if args.stage in ("analyze", "all"):
         from spherex_comspec.analysis import write_analysis
-        flag_variants = [n for n in names if n.startswith("dc_") and n != "dc_all_lenient"]
-        raw = "raw_all" if "raw_all" in names else None
-        lenient = "dc_all_lenient" if "dc_all_lenient" in names else None
-        write_analysis(MAIN_VARIANT if MAIN_VARIANT in names else names[0], flag_variants, raw, lenient)
+        main_name, flag_variants, raw, extra = _studies(names)
+        write_analysis(main_name, flag_variants, raw, extra)
 
     if args.stage in ("figures", "all"):
         from spherex_comspec.dataio import PhaseAssignment
@@ -102,22 +118,22 @@ def main(argv: Optional[List[str]] = None) -> int:
         assignment = PhaseAssignment.load()
         if args.targets:
             assignment = assignment[assignment.target.isin(args.targets)]
-        main_v = VARIANTS[MAIN_VARIANT if MAIN_VARIANT in names else names[0]]
+        main_name, flag_variants, raw, extra = _studies(names)
+        main_v = VARIANTS[main_name]
         _, gmap, _, epochs = regroup_all(sorted(assignment.target.unique()), main_v.grouping)
         save_grouping_figures(epochs, gmap, assignment, main_v.aperture, main_v,
                               max_targets=None)
         for n in names:
             save_variant_figures(VARIANTS[n], assignment, max_groups=args.max_groups,
                                  validation=not args.no_validation_figs, fits=not args.no_fit_figs)
-        flag_variants = [n for n in names if n.startswith("dc_") and n != "dc_all_lenient"]
-        if len(flag_variants) > 1 and MAIN_VARIANT in flag_variants:
-            cmp = compare_variants(MAIN_VARIANT, [n for n in flag_variants if n != MAIN_VARIANT]
-                                   + (["dc_all_lenient"] if "dc_all_lenient" in names else []))
-            fig = plot_flag_comparison(cmp["census"], cmp["pairs"], cmp["paired"], MAIN_VARIANT)
+        partners = [n for n in flag_variants if n != main_name] + extra
+        if partners:
+            cmp = compare_variants(main_name, partners)
+            fig = plot_flag_comparison(cmp["census"], cmp["pairs"], cmp["paired"], main_name)
             savefig(fig, _dir.FIG_DIR / "flag_policy_comparison.png", dpi=200)
-        if "raw_all" in names and "dc_all" in names:
-            dce = distcorr_effect("dc_all", "raw_all")
-            fig = plot_distcorr_effect(dce["paired"], dce["band_rows"], "dc_all", "raw_all")
+        if raw:
+            dce = distcorr_effect(main_name, raw)
+            fig = plot_distcorr_effect(dce["paired"], dce["band_rows"], main_name, raw)
             savefig(fig, _dir.FIG_DIR / "distcorr_effect.png", dpi=200)
 
     log.info("%s finished in %.1f min", args.stage, (time.time() - t0) / 60)

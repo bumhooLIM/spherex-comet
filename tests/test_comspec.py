@@ -118,6 +118,17 @@ def test_fit_reports_a_group_with_no_surviving_channel():
     assert filling_factor(np.array([])).size == 0
 
 
+def test_default_variants_are_well_formed():
+    """The driver selects study partners by role, so the registry must have unique names,
+    exactly one main variant, and that one must be MAIN_VARIANT."""
+    from spherex_comspec.config import DEFAULT_VARIANTS, MAIN_VARIANT, VARIANTS
+    names = [v.name for v in DEFAULT_VARIANTS]
+    assert len(set(names)) == len(names) and set(VARIANTS) == set(names)
+    mains = [v.name for v in DEFAULT_VARIANTS if v.role == "main"]
+    assert mains == [MAIN_VARIANT]
+    assert len({v.hash for v in DEFAULT_VARIANTS}) == len(names)
+
+
 # ------------------------------------------------------------------ data-dependent tests
 def test_regrouping_reproduces_the_old_map():
     if not (HAVE_DATA and HAVE_OLD):

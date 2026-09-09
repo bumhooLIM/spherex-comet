@@ -186,13 +186,17 @@ def placeholder_table() -> pd.DataFrame:
 
 
 def write_analysis(main: str, flag_variants: Sequence[str], raw_variant: Optional[str] = None,
-                   lenient_variant: Optional[str] = None) -> Dict[str, object]:
-    """Run every study and write the tables under ``results/comspec/``."""
+                   extra_variants: Sequence[str] = ()) -> Dict[str, object]:
+    """
+    Run every study and write the tables under ``results/comspec/``.
+
+    ``extra_variants`` -- the badphot-policy run and any previous baseline -- join the
+    flag census and the paired-Q comparison against ``main``; every comparison is the
+    same pairwise machinery, so the studies differ only in which run is paired.
+    """
     _dir.ensure_dirs()
     out = {}
-    others = [v for v in flag_variants if v != main]
-    if lenient_variant:
-        others = others + [lenient_variant]
+    others = [v for v in flag_variants if v != main] + [v for v in extra_variants if v != main]
     cmp = compare_variants(main, others)
     cmp["census"].to_csv(_dir.RESULT_DIR / "flag_policy_census.csv", index=False)
     cmp["pairs"].to_csv(_dir.RESULT_DIR / "flag_policy_pairs.csv", index=False)

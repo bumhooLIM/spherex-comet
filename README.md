@@ -55,10 +55,10 @@ Requires the `spherex` conda environment (numpy, pandas, astropy, scipy, matplot
 cd spherex-comspec
 python main.py all                       # everything: group, six variants, analysis, figures
 python main.py group                     # (1) regroup the epochs, once
-python main.py run --variants dc_all     # (2) continuum + fit for one variant
+python main.py run --variants dc_main    # (2) continuum + fit for one variant
 python main.py analyze                   # (3) cross-variant tables
-python main.py figures --variants dc_all # (4) figures for one variant
-python main.py run --variants dc_all --targets 24P 2P    # a quick look
+python main.py figures --variants dc_main # (4) figures for one variant
+python main.py run --variants dc_main --targets 24P 2P   # a quick look
 python tests/test_comspec.py
 ```
 
@@ -146,26 +146,29 @@ non-simultaneously, so the channels of one group were taken at different
 geometries.  Inside one 28-day epoch of 24P the factor r_h²Δ² varies by 3×; a
 polynomial through the raw spectrum would absorb part of that geometric gradient
 into the band.  Even after regrouping to 10 % in r_h, the spread of r_h²Δ²
-across the channels of a fitted group is 13 % (median), 53 % (90th percentile)
-and up to 157 %, because Δ is not constrained by the grouping rules — and the
-change in Q between the two continuum spaces correlates with it (r = 0.48).
+across the channels of a fitted group is 13 % (median), 55 % (90th percentile)
+and up to 166 %, because Δ is not constrained by the grouping rules — and the
+change in Q between the two continuum spaces correlates with it (r = 0.40 over
+the groups detected in both spaces; 0.48 for the 2026-09-08 baseline).
 
 ## Variants (`config.DEFAULT_VARIANTS`)
 
-| name | flag policy | continuum space | purpose |
-|---|---|---|---|
-| `dc_all` | drop `badphot` only | distance-corrected | **main result** (`MAIN_VARIANT`) |
-| `dc_no_a` | + drop flag `a` | distance-corrected | contamination study |
-| `dc_no_b` | + drop flag `b` | distance-corrected | contamination study |
-| `dc_no_ab` | + drop `a` and `b` | distance-corrected | contamination study |
-| `raw_all` | drop `badphot` only | physical | distance-correction study |
-| `dc_all_lenient` | drop `badphot` only if `frac_badpix_ap > 0.05` | distance-corrected | badphot-policy study |
+| name | role | flag policy | continuum space | purpose |
+|---|---|---|---|---|
+| `dc_main` | main | drop rows with `frac_badpix_ap > 0.05`, drop flag `a` (`BASELINE_FLAGS`) | distance-corrected | **main result** (`MAIN_VARIANT`) |
+| `dc_main_keep_a` | flags | baseline but flag `a` kept | distance-corrected | contamination study: flag `a` |
+| `dc_main_no_b` | flags | baseline + drop flag `b` | distance-corrected | contamination study: flag `b` |
+| `raw_main` | distcorr | baseline | physical | distance-correction study |
+| `dc_main_strict` | badphot | baseline but any bad pixel drops the row | distance-corrected | badphot-policy study |
+| `dc_all` | previous | strict `badphot`, every flag kept (the 2026-09-08 baseline) | distance-corrected | before/after the placeholder switch |
 
 Each variant is a complete, independent run under `data/comspec/<variant>/emission/`,
 `results/comspec/<variant>/` and `fig/comspec/<variant>/`.  A variant's `hash`
 (written to `run.meta.json`) identifies its full parameter set.  `config.VARIANTS`
 maps each name to its `Variant`, so a script drives one directly:
-`run_variant(VARIANTS["dc_all"])`, `save_variant_figures(VARIANTS["dc_all_lenient"], assignment)`.
+`run_variant(VARIANTS["dc_main"])`, `save_variant_figures(VARIANTS["dc_main_strict"], assignment)`.
+The driver picks each study's partners by `Variant.role` (`main`, `flags`, `distcorr`,
+`badphot`, `previous`), so a new variant only needs a row in `DEFAULT_VARIANTS`.
 
 ## Outputs
 
@@ -204,7 +207,8 @@ scientific notation.
 `config.PLACEHOLDERS` lists, in priority order, every value that is a stand-in
 or an unattributed convention rather than a measurement — the SPHEREx LSF,
 the band profiles, the expansion-velocity law, the 2.7 µm blue edge, the
-`badphot` policy, the aperture rule, the polynomial orders, the 1σ detection
+`badphot` policy (applied on 2026-09-09 as `BASELINE_FLAGS`), the aperture rule,
+the polynomial orders, the 1σ detection
 tier, the negative-channel cut, the error column, the grouping thresholds, the
 sufficiency gates, the opacity calibration, T_rot and the upstream flag
 thresholds.  `results/comspec/placeholders.csv` is the same table; the

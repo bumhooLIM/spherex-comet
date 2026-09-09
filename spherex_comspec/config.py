@@ -29,7 +29,8 @@ __all__ = [
     "KEY_RANGES", "BAND_CARRIER", "BAND_COLORS", "EMISSION_DTYPES", "SOURCEFLAG_PRIORITY",
     "RHO_TAU_REF_KM", "KAPPA_PUMP", "PLACEHOLDERS",
     "GroupingConfig", "ApertureConfig", "FlagPolicy", "ContinuumConfig", "ModelParams",
-    "FitConfig", "Variant", "DEFAULT_VARIANTS", "MAIN_VARIANT", "VARIANTS", "config_hash",
+    "FitConfig", "Variant", "BASELINE_FLAGS", "DEFAULT_VARIANTS", "MAIN_VARIANT", "VARIANTS",
+    "config_hash",
 ]
 
 # ---------------------------------------------------------------------- physical constants
@@ -272,6 +273,11 @@ class Variant:
     continuum: ContinuumConfig = field(default_factory=ContinuumConfig)
     fit: FitConfig = field(default_factory=FitConfig)
     model: ModelParams = field(default_factory=ModelParams)
+    #: What the run is for.  ``main`` is the catalog result; ``flags``, ``distcorr`` and
+    #: ``badphot`` are its study partners; ``previous`` is an earlier baseline kept for a
+    #: before/after comparison.  The driver selects study partners by role, so a new
+    #: variant needs no change anywhere else.
+    role: str = "study"
 
     @property
     def flux_column(self) -> str:
@@ -289,7 +295,8 @@ class Variant:
 
     @property
     def hash(self) -> str:
-        return config_hash(self.to_dict())
+        # the role is a label for the driver, not a parameter of the run
+        return config_hash({k: v for k, v in self.to_dict().items() if k != "role"})
 
 
 def config_hash(d: dict) -> str:
@@ -297,18 +304,29 @@ def config_hash(d: dict) -> str:
 
 
 # --------------------------------------------------------------------------- the variants
+#: The source-flag policy of the main result.  Placeholder 5 was applied on 2026-09-09: a row is
+#: dropped only when more than 5 % of its aperture is bad (the strict rule discarded 52 % of
+#: 24P at no gain), and flag ``a`` (a G < 13 star within r_ap + 2 FWHM) is dropped -- it costs
+#: 89 of 3 815 channels and nothing in Q.
+BASELINE_FLAGS = FlagPolicy("main", drop_flags=("a",), max_frac_badpix=0.05)
+
 #: The runs the analysis compares.  ``dc_*`` fit the continuum in distance-corrected space;
-#: ``raw_all`` is the same policy in physical flux space, for the distance-correction study.
+#: ``raw_main`` is the baseline policy in physical flux space (distance-correction study);
+#: ``dc_all`` is the 2026-09-08 baseline -- strict ``badphot``, every flag kept -- so the effect
+#: of the placeholder switch is itself a product of the run.
 DEFAULT_VARIANTS: Tuple[Variant, ...] = (
-    Variant("dc_all",   FlagPolicy("all"), use_distcorr=True),
-    Variant("dc_no_a",  FlagPolicy("no_a", drop_flags=("a",)), use_distcorr=True),
-    Variant("dc_no_b",  FlagPolicy("no_b", drop_flags=("b",)), use_distcorr=True),
-    Variant("dc_no_ab", FlagPolicy("no_ab", drop_flags=("a", "b")), use_distcorr=True),
-    Variant("raw_all",  FlagPolicy("all"), use_distcorr=False),
-    Variant("dc_all_lenient", FlagPolicy("all_lenient", max_frac_badpix=0.05), use_distcorr=True),
+    Variant("dc_main",        BASELINE_FLAGS, use_distcorr=True, role="main"),
+    Variant("dc_main_keep_a", FlagPolicy("keep_a", max_frac_badpix=0.05),
+            use_distcorr=True, role="flags"),
+    Variant("dc_main_no_b",   FlagPolicy("no_ab", drop_flags=("a", "b"), max_frac_badpix=0.05),
+            use_distcorr=True, role="flags"),
+    Variant("raw_main",       BASELINE_FLAGS, use_distcorr=False, role="distcorr"),
+    Variant("dc_main_strict", FlagPolicy("strict_no_a", drop_flags=("a",)),
+            use_distcorr=True, role="badphot"),
+    Variant("dc_all",         FlagPolicy("all"), use_distcorr=True, role="previous"),
 )
 #: The variant whose products are the catalog's main result.
-MAIN_VARIANT = "dc_all"
+MAIN_VARIANT = "dc_main"
 #: Name -> variant registry: the CLI and any script that drives one variant select it here,
 #: so a variant added to ``DEFAULT_VARIANTS`` becomes addressable by name everywhere at once.
 VARIANTS: Dict[str, Variant] = {v.name: v for v in DEFAULT_VARIANTS}
@@ -339,10 +357,11 @@ PLACEHOLDERS: Tuple[dict, ...] = (
               "carrying 23 % of the peak; the project handoff recommends 2.50 um",
          update="2.50 um after re-checking one-sided continuum rates (14 groups go one-sided)"),
     dict(priority=5, quantity="badphot policy",
-         value="drop any aperture containing a bad pixel (FlagPolicy.drop_badphot)",
+         value="drop rows with frac_badpix_ap > 0.05 (FlagPolicy.max_frac_badpix; applied 2026-09-09, "
+               "was: any aperture containing a bad pixel)",
          role="the revised photometry flags *any* bad pixel; for close, bright comets this removes "
               "~50 % of rows.  frac_badpix_ap is in the data for a threshold instead",
-         update="max_frac_badpix ~ 0.05 once the flux loss per bad pixel has been characterised"),
+         update="applied; re-examine the 0.05 threshold once the flux loss per bad pixel is characterised"),
     dict(priority=6, quantity="aperture rule",
          value="20 000 km inside 3 au, 40 000 km beyond; promoted to the smallest valid "
                "km aperture with >= 95 % coverage (ApertureConfig)",

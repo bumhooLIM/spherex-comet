@@ -3,6 +3,11 @@
 **Package:** `spherex-comspec/` (`spherex_comspec` 1.0.0) · **Date:** 2026-09-08 ·
 **Input:** `data/apphot_revised/` (68 comets, 27 797 exposures, `spherex_apphot` config `5502194856bc`)
 
+> **Update 2026-09-09 — placeholder 5 applied.**  The main variant is now `dc_main`
+> (rows dropped only when `frac_badpix_ap > 0.05`, flag `a` dropped).  §1–§3 describe the
+> 2026-09-08 baseline, which remains a variant (`dc_all`, role *previous*); §7 records what
+> the switch changed.  The superseded study runs sit under `*/comspec/_superseded/`.
+
 This document records what changed when the three-notebook pipeline
 (`phase_group_update` → `continuum_subtraction` → `gas_emission_fit` + `emission-fitter/`)
 was rebuilt as one package on the revised aperture photometry, what the two
@@ -227,7 +232,7 @@ ones this run gives direct evidence on:
 | 2 | band profiles Φ_b | Gaussian, 0.02–0.10 µm | neutral for Q (unit area); wrong for any band-shape claim | PSG / GSFC templates |
 | 3 | expansion velocity | 0.8 r_h⁻⁰·⁵ km/s, unattributed | ±18 % in Q(CO₂) per 20 % in v_g; does not cancel in ratios | cited species-specific law |
 | 4 | 2.7 µm blue edge | 2.60 µm | loses 6.7 % of the band; 1 comb offset in 5 leaves < 3 channels | 2.50 µm |
-| **5** | **`badphot` policy** | drop any bad pixel | **strict rule discards 52 % of 24P; lenient (frac > 0.05) recovers +7 robust H₂O, +7 CO at unchanged Q** | `max_frac_badpix = 0.05` |
+| **5** | **`badphot` policy** | frac > 0.05 (**applied 2026-09-09**; was: any bad pixel) | **strict rule discards 52 % of 24P; lenient (frac > 0.05) recovers +7 robust H₂O, +7 CO at unchanged Q** | done — `BASELINE_FLAGS`; re-examine the 0.05 threshold |
 | 6 | aperture rule | 20 k / 40 k km at 3 au, promoted for coverage | 4 targets promoted; `rho_ap_km` is physics, not a label | S/N-driven per target |
 | 7 | polynomial orders | 3 / 2 / 2 | `cv_best_order` disagrees in most WARNs | re-tune from `cv_best_order` |
 | 8 | detection tier | 1σ | see concern 7 | 3σ or rename |
@@ -235,8 +240,8 @@ ones this run gives direct evidence on:
 | 10 | error column | `source_sum_err_mjy` | `sky_excess_ratio` ≈ 1.2; χ²_ν ≈ 2.9 | empirical error |
 | 11–15 | grouping thresholds, sufficiency gates, opacity calibration, T_rot, upstream flag thresholds | as in the notebooks / `spherex_apphot` | no new evidence | see registry |
 
-Left as defaults deliberately: everything the user's specification fixed
-(strict `badphot`, the 2.60 µm edge, the 20 k / 40 k rule, the 1σ tier).  Each
+Left as defaults deliberately: the 2.60 µm edge, the 20 k / 40 k rule and the 1σ
+tier (the strict `badphot` rule was replaced on 2026-09-09, §7).  Each
 is a one-line change in `config.py`, and the variant hash written to every
 `run.meta.json` records which value produced which file.
 
@@ -248,7 +253,8 @@ is a one-line change in `config.py`, and the variant hash written to every
 data/comspec/phase_assignment.csv                    per-exposure phase labels (never written into apphot)
 results/comspec/phase_map.csv, phase_cuts.csv        174 groups; every cut and what it cost
 data/comspec/<variant>/emission/                     continuum summaries + point spectra, per target
-results/comspec/<variant>/gas_fit.csv                Q per (target, phase)            <- main: dc_all
+results/comspec/<variant>/gas_fit.csv                Q per (target, phase)            <- main: dc_main
+*/comspec/_superseded/                               the 2026-09-08 study runs and analysis tables
 results/comspec/<variant>/gas_fit_lines/             model curves and residuals per fit
 results/comspec/<variant>/{continuum_summary,skipped_groups,not_fitted,apertures}.csv, run.meta.json
 results/comspec/flag_policy_{census,pairs,paired_Q}.csv
@@ -260,3 +266,73 @@ fig/comspec/<variant>/emission_model/                model-over-data per fit
 fig/comspec/<variant>/summary_{Q_vs_rhel,mixing_ratios}.png
 fig/comspec/flag_policy_comparison.png, distcorr_effect.png
 ```
+
+---
+
+## 7. Placeholder 5 applied (2026-09-09)
+
+`config.BASELINE_FLAGS = FlagPolicy("main", drop_flags=("a",), max_frac_badpix=0.05)`
+is now the policy of the main variant `dc_main`: a row is dropped only when more
+than 5 % of its aperture is bad, and flag `a` is dropped.  The study runs were
+rebuilt around it and selected by `Variant.role` (`flags`, `distcorr`, `badphot`),
+and the 2026-09-08 baseline is kept as `dc_all` (role `previous`), re-run under the
+same code: its 136 fits reproduce the §1 values to the last digit.  The earlier
+study trees (`dc_no_a`, `dc_no_b`, `dc_no_ab`, `raw_all`, `dc_all_lenient`) and the
+earlier analysis tables were moved to `*/comspec/_superseded/`.
+
+### 7.1 Main result, before and after
+
+| | `dc_all` (previous) | `dc_main` (new) |
+|---|---|---|
+| groups analysed | 150 | 154 |
+| band-rows saved | 450 (68.9 %) | 462 (69.7 %) |
+| continuum PASS / WARN / FAIL | 202 / 108 / 140 | 222 / 100 / 140 |
+| groups fitted | 136 | 139 |
+| detected (≥ 1σ) H₂O / CO₂ / CO | 33 / 71 / 19 | 43 / 77 / 25 |
+| robust (n_eff ≥ 2) H₂O / CO₂ / CO | 21 / 25 / 12 | 28 / 24 / 21 |
+| median χ²_ν of the fits | 2.86 | 2.44 |
+| 24P channels entering the spectra | 186 | 393 |
+
+Four groups enter the analysis that the strict rule had emptied (10P phase 3,
+2025 K1 phases 3–4, 210P phase 5); four fits are new (2025 K1 phase 3, 210P
+phases 2 and 5, 306P phase 5) and one is lost (499P phase 3, concern 11).  In the
+groups fitted under both policies the production rates are the same: the median
+ratio `dc_all` / `dc_main` is 1.000 for all three species, the 16–84 % range is
+0.99–1.06 (H₂O), 0.98–1.11 (CO₂), 0.95–1.18 (CO), no value moves by more than 3σ
+and the largest shift is 2.4σ.  The robust set gains eight H₂O detections (10P 2,
+2019 U5 1, 2023 A3 4, 2023 F3 1–2, 306P 4, 48P 1, 499P 4) and loses one
+(2025 UX109 1); CO₂ gains two (161P 1, 2023 H5 1) and loses three (2025 UX109 1,
+493P 2, 499P 3); CO gains nine (2023 V1 2, 2024 T5 2, 2025 A6 1, 2025 K1 5, 24P 4,
+306P 2 and 5, 486P 2, 48P 1) and loses none.  The lower median χ²_ν comes with
+the larger samples, not from any change in the errors.
+
+### 7.2 The studies around the new baseline
+
+| study | run | groups / fits | robust H₂O / CO₂ / CO | Q vs `dc_main` (16–84 %) | max shift |
+|---|---|---|---|---|---|
+| keep flag `a` | `dc_main_keep_a` | 155 / 139 | 28 / 25 / 19 | 1.000–1.000 (all species) | 1.4σ |
+| drop flag `b` too | `dc_main_no_b` | 138 / 109 | 20 / 13 / 16 | 0.84–1.02 / 0.90–1.06 / 0.81–1.37 | 2.4σ |
+| strict `badphot` | `dc_main_strict` | 150 / 136 | 21 / 24 / 13 | 0.98–1.04 / 1.00–1.11 / 0.93–1.14 | 2.4σ |
+| physical-space continuum | `raw_main` | 154 / 139 | — | 0.92–1.04 / 0.985–1.004 / 0.97–1.05 | 1.15σ |
+
+*Flag `a`* is now 342 of 12 438 channels (the lenient rule admits more rows near
+bright stars); keeping them adds one group and three band-rows, the same 139 fits,
+and identical Q.  Dropping it costs nothing and removes the one contamination
+mechanism the growth-curve study proved, so it stays dropped.  *Flag `b`* still
+removes 30 fits and a third of the channels at unchanged Q: do not cut on it.
+*The strict `badphot` rule* costs seven robust H₂O and eight robust CO detections
+against the lenient rule with no change in Q, which is the §3.4 result at full
+scale.  *The distance-corrected continuum* changes Q by at most 1.15σ; 446 of 462
+band-rows keep their verdict between the two spaces (217 PASS, 91 WARN, 138 FAIL
+in both).  Over the 139 groups detected in both runs the in-group spread of r_h²Δ²
+has a median of 13.1 %, a 90th percentile of 55 % and a maximum of 166 %, and the
+size of the Q change (|log ratio|) correlates with it at r = 0.40 (0.48 for the
+previous pair, §2.3).
+
+### 7.3 Caveat carried forward
+
+Rule 3 of the grouping (§1) still tests which epochs sampled a band with the raw
+`badphot` column, not with the row policy, so the phase assignment did not move
+when the policy did.  That is deliberate — one assignment serves every variant —
+but a lenient-rule grouping could keep an emission band whole in a few more
+places (2025 K1 is the case to look at).

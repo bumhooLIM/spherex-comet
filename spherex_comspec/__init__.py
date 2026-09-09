@@ -21,7 +21,7 @@ to production rates of H2O, CO2 and CO:
 Quick start::
 
     from spherex_comspec import run_variant, DEFAULT_VARIANTS
-    res = run_variant(DEFAULT_VARIANTS[0])       # dc_all
+    res = run_variant(DEFAULT_VARIANTS[0])       # dc_main
 """
 
 from __future__ import annotations
