@@ -1,47 +1,44 @@
 # Handoff
 
 ## Current State
-The 68-comet survey is **complete and fully reduced**.  Full statistics:
-`doc/survey_summary_68comets.md`.
+The 68-comet survey is complete and fully reduced; PR #2 merged to `master`.
+Statistics: `doc/survey_summary_68comets.md`.
 
-- 56 targets with photometry, 12 with no data (3 never reach Vmag 20, 9 have
-  no ZTF coverage at the positions that do).
-- Downloads **98.75% complete** (8,734 / 8,845), 0 corrupt.  The 111 missing
-  are permanent: 80 archive 404s and 31 that IRSA rejects with "Cutout does not
-  overlap image" — the comet falls off the quadrant, so they would have tripped
-  `flag_outside` anyway.  Two repair passes recovered zero of them; do not
-  retry a third time.
-- 41,533 measurement rows over five apertures, 52.1% clean.  Contamination is
-  the largest rejection cause at 19.9%.
-- Radial profiles for **all 56** targets: median comet slope −1.73 against
-  −4.39 for field stars, 95.6% of clean frames shallower than the stars.
-- Afρ figures for every target use the r_h − q abscissa with the Kepler date
-  axis; the targets 1–12 that were stuck on signed-r_h have been regenerated.
+**The 1/ρ question is answered** (`doc/profile_survey_1rho.md`, driver
+`notebooks/profile_survey.py`): with the PSF core and sky modelled, the coma
+matches 1/ρ to 1–2% from ~1,500 km to the edge of coverage — 37,000–45,000 km —
+at every S/N band and every r_h from 0.6 to 6.7 au.  No turnover anywhere.
+The 24P "ρ_max ≥ 12,000 km" was coverage.  Corrected slope converges on
+m = 1.00 at S/N(10 px) > 60 (naive 1.42); per-target medians span 0.57–1.42,
+which is real comet-to-comet dispersion.
+
+Slopes steeper than −2.5 are not measurements: 185 of 213 such frames never
+got a constrained fit, and the 28 that did correct from 2.67 to 1.24.  Rule:
+use the PSF-model + free-sky slope at S/N(10 px) > 20, off the sky bound.
+
+This is on branch `analysis/profile-survey-1rho`, not yet pushed.
 
 ## Next Steps
-Nothing is outstanding from the survey itself.  Open scientific questions:
-
-1. Extend `profile_resolution.py` beyond 24P — does 1/ρ hold past ~12,000 km
-   for the targets with large ρ_max (2023V1 37,000 km; 2025M2 34,600 km)?
-   The steep-slope end of the summary table is the sample to test.
-2. Decide whether slopes below about −2.5 should be excluded from any
-   population analysis, given they track frame depth rather than coma
-   structure.
-3. `fix/horizons-query-correctness` is well ahead of `master` and has never
-   been merged.  Consider opening the PR.
+1. **Decide on the profile centring fix.**  20% of clean S/N > 5 frames were
+   excluded because the comet profile peaks off-centre; the off-peak rate
+   tracks the winpos shift from ephemeris (6% at < 0.5 px, 57% at 2–5 px).
+   Fix = peak re-centring within ±2 px in `run_profiles`, then re-run
+   `--steps profile figures` (~30 min).  Changes numbers in the merged
+   summary for 40P, 235P, 47P, 2024E1 most.  User's call.
+2. Open a PR for `analysis/profile-survey-1rho` if the note is wanted on master.
+3. Optional: tighten the sky bound in `fit_coma_model` (now 3× outer SB) — 23%
+   of fits sit on it, 42% at S/N 5–20.  A bound tied to the sky uncertainty
+   would keep more low-S/N frames constrained.
 
 ## Blind Spots / Dead Ends
-- A **running process keeps its imported modules**.  The profile step and the
-  perihelion axis were both added mid-run and silently did not apply to
-  targets already in flight; both needed a full re-reduction afterwards.
-  Restart the batch after changing the package.
-- **`--no-resume` rewrites every status row**, including targets it cannot
-  act on.  A download-only pass relabelled the 12 no-data targets `no_urls`,
-  destroying the `no_frames` / `no_epochs` distinction; it was recovered from
-  the run logs.  Read the logs, not just the status CSV, when reconstructing.
-- The run **hung 54 min on one Horizons call** at 0% CPU while the service
-  answered fresh requests in 0.8 s.  `socket.setdefaulttimeout(300)` in
-  `survey.py` now bounds this.
-- macOS writes `._name` AppleDouble sidecars on the exFAT T7; they matched the
-  FITS glob and were reported as half the frames being unreadable.  Filtered in
-  `phot.py` — do not "fix" that by re-downloading.
+- **Oversampled sub-pixels are correlated**: `n_clip` overstates independent
+  samples by ~oversample², so any χ² from the profile tables is ~16× too large.
+  Scale before thresholding, or don't threshold.
+- **The free sky can run to its bound** and the fit then reports a slope that
+  means nothing; always check `at_bound`.  16 slopes also hit the m = 3
+  ceiling.
+- **`fit_coma_model` needs an on-peak profile.**  Off-peak frames drive the
+  nucleus term to zero and the sky to its bound (seen on 2022E2).
+- A running process keeps its imported modules — restart batches after
+  package changes.  `--no-resume` rewrites every status row.  AppleDouble
+  `._` sidecars on the exFAT SSD match FITS globs; filtered in `phot.py`.
