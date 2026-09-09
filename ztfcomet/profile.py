@@ -82,7 +82,7 @@ class ProfileConfig:
                  detect_sigma=5.0, exclude_comet_pix=30.0, min_pixels=3,
                  fit_rmin_fwhm=1.5, fit_rmax_pix=10.0, star_isolation_pix=None,
                  oversample_stars=True, recentre=True, recentre_search_pix=2.0,
-                 recentre_smooth_pix=0.5, recentre_max_fp=0.005):
+                 recentre_smooth_pix=0.5, recentre_max_fp=0.005, recentre_max_search_pix=4.0):
         self.radii = np.asarray(DEFAULT_RADII if radii is None else radii, float)
         self.half_width = float(half_width)
         self.oversample = int(oversample)
@@ -105,6 +105,7 @@ class ProfileConfig:
         self.recentre_search_pix = float(recentre_search_pix)
         self.recentre_smooth_pix = float(recentre_smooth_pix)
         self.recentre_max_fp = float(recentre_max_fp)
+        self.recentre_max_search_pix = float(recentre_max_search_pix)
         # Another source inside this radius disqualifies a star; default is the
         # outer annulus edge plus a margin, so the profile is never blended.
         self.star_isolation_pix = (float(star_isolation_pix) if star_isolation_pix
@@ -365,7 +366,7 @@ def stack_star_profiles(sub, stars, profile_config=None, oversample=1):
 
 # ------------------------------------------------------------------ per frame
 def profile_frame(path, x, y, sky, gain, readnoise, saturate, fwhm_pix,
-                  profile_config=None):
+                  profile_config=None, x_ref=None, y_ref=None):
     """Comet and field-star profiles for one frame.
 
     Returns
@@ -392,9 +393,10 @@ def profile_frame(path, x, y, sky, gain, readnoise, saturate, fwhm_pix,
     sky_level = float(sky) if np.isfinite(sky) else float(bkg.globalback)
     cen = (refine_centre(data, x, y, search_pix=pc.recentre_search_pix,
                          smooth_pix=pc.recentre_smooth_pix, oversample=pc.oversample,
-                         max_false_positive=pc.recentre_max_fp)
+                         max_false_positive=pc.recentre_max_fp, x_ref=x_ref, y_ref=y_ref,
+                         max_search_pix=pc.recentre_max_search_pix)
            if pc.recentre else dict(x=float(x), y=float(y), shift_pix=0.0, snr=np.nan,
-                                    threshold=np.nan, refined=False))
+                                    threshold=np.nan, search_pix=np.nan, refined=False))
     x, y = cen["x"], cen["y"]
     comet = radial_profile(data, x, y, pc.radii, pc.half_width, sky=sky_level,
                            oversample=pc.oversample, sigma=pc.sigma, maxiters=pc.maxiters,
@@ -423,7 +425,8 @@ def profile_frame(path, x, y, sky, gain, readnoise, saturate, fwhm_pix,
     summary = dict(
         central_sb=c0, sky=sky_level,
         x_profile=x, y_profile=y, recentre_shift_pix=cen["shift_pix"],
-        recentre_snr=cen["snr"], recentre_threshold=cen["threshold"], recentred=cen["refined"],
+        recentre_snr=cen["snr"], recentre_threshold=cen["threshold"],
+        recentre_search_pix=cen["search_pix"], recentred=cen["refined"],
         n_stars=int(stack["n_stars"].max()) if len(stack) else 0,
         n_stars_selected=int(len(stars)),
         slope_comet=slope_c, slope_comet_unclipped=slope_u, slope_star=slope_s,
@@ -438,8 +441,9 @@ def profile_frame(path, x, y, sky, gain, readnoise, saturate, fwhm_pix,
 _NULL_THRESHOLDS = {}
 
 
-def _peak_contrast(box, cx, cy, oversample, smooth_pix, search_pix):
-    """Smoothed maximum inside the search disc minus the smoothed value at
+def _peak_contrast(box, cx, cy, oversample, smooth_pix, search_pix, dx=None, dy=None):
+    """Smoothed maximum inside the search disc, centred at (dx, dy) or at the
+    reference (cx, cy) by default, minus the smoothed value at the reference
     (cx, cy), in units of the smoothed noise estimated from the box itself.
 
     One routine for both the live call and the null calibration, so that any
@@ -466,7 +470,9 @@ def _peak_contrast(box, cx, cy, oversample, smooth_pix, search_pix):
     noise = sigma_native * gain
     sub_y = (np.arange(z.shape[0]) + 0.5) / os_ - 0.5
     sub_x = (np.arange(z.shape[1]) + 0.5) / os_ - 0.5
-    rr = np.hypot(sub_x[None, :] - cx, sub_y[:, None] - cy)
+    dx = cx if dx is None else dx
+    dy = cy if dy is None else dy
+    rr = np.hypot(sub_x[None, :] - dx, sub_y[:, None] - dy)
     inside = rr <= search_pix
     if not inside.any() or not np.isfinite(noise) or noise <= 0:
         return np.nan, 0, 0, z, sub_x, sub_y
@@ -502,7 +508,8 @@ def _null_contrast_threshold(shape, oversample, smooth_pix, search_pix, max_fals
     return thr
 
 
-def refine_centre(data, x, y, search_pix=2.0, smooth_pix=0.5, oversample=4, max_false_positive=0.005):
+def refine_centre(data, x, y, search_pix=2.0, smooth_pix=0.5, oversample=4, max_false_positive=0.005,
+                  x_ref=None, y_ref=None, max_search_pix=4.0):
     """Move a comet's profile centre from the windowed centroid to the optocentre.
 
     The photometry centroid is ``sep.winpos``: a Gaussian-windowed centroid,
@@ -532,6 +539,18 @@ def refine_centre(data, x, y, search_pix=2.0, smooth_pix=0.5, oversample=4, max_
         Starting centre, native 0-based pixel coordinates.
     search_pix, smooth_pix : float
         Search radius and Gaussian sigma, both in native pixels.
+    x_ref, y_ref : float, optional
+        An independent estimate of the nucleus position -- the ephemeris.
+        When given, the search disc covers both it and (x, y): centred on
+        their midpoint, radius half their separation plus *search_pix*,
+        capped at *max_search_pix*.  Without it a centroid dragged 3 px down
+        a tail cannot find its way back: the search around (x, y) alone then
+        lands, confidently, on the brightest point of the disc edge facing
+        the nucleus -- 40P's shifts piled up at 1.9-2.1 px for exactly that
+        reason.
+    max_search_pix : float
+        Cap on the adaptive radius; a nucleus further than this from the
+        midpoint of two estimates of its position is not the same object.
     oversample : int
         Zoom factor; use the same one as :func:`radial_profile` so the two
         agree on where sub-pixels sit.
@@ -546,22 +565,32 @@ def refine_centre(data, x, y, search_pix=2.0, smooth_pix=0.5, oversample=4, max_
     dict
         ``x``, ``y`` (native coordinates), ``shift_pix``, ``snr`` (the contrast
         found, in units of smoothed noise, whether or not it justified a move),
-        ``threshold`` (what it had to exceed), ``refined``.
+        ``threshold`` (what it had to exceed), ``search_pix`` (the radius
+        used), ``refined``.
     """
     os_ = int(oversample)
-    keep = dict(x=float(x), y=float(y), shift_pix=0.0, snr=np.nan, threshold=np.nan, refined=False)
-    half = int(np.ceil(search_pix + 3.0 * smooth_pix + 2.0))
-    xi, yi = int(round(x)), int(round(y))
+    # Rounded to half a pixel so the null calibration caches per radius.
+    if (x_ref is not None and y_ref is not None and np.isfinite(x_ref) and np.isfinite(y_ref)):
+        half_sep = 0.5 * float(np.hypot(x_ref - x, y_ref - y))
+        xd, yd = 0.5 * (float(x) + float(x_ref)), 0.5 * (float(y) + float(y_ref))
+        radius = float(np.clip(np.ceil(2.0 * (half_sep + search_pix)) / 2.0, search_pix, max_search_pix))
+    else:
+        xd, yd, radius = float(x), float(y), float(search_pix)
+    keep = dict(x=float(x), y=float(y), shift_pix=0.0, snr=np.nan, threshold=np.nan,
+                search_pix=radius, refined=False)
+    half = int(np.ceil(radius + 3.0 * smooth_pix + 2.0))
+    xi, yi = int(round(xd)), int(round(yd))
     x0, y0 = max(xi - half, 0), max(yi - half, 0)
     x1, y1 = min(xi + half + 1, data.shape[1]), min(yi + half + 1, data.shape[0])
     box = np.asarray(data[y0:y1, x0:x1], float)
     if box.shape[0] < 5 or box.shape[1] < 5 or not np.isfinite(box).any():
         return keep
 
-    snr, i0, j0, z, sub_x, sub_y = _peak_contrast(box, x - x0, y - y0, os_, smooth_pix, search_pix)
+    snr, i0, j0, z, sub_x, sub_y = _peak_contrast(box, x - x0, y - y0, os_, smooth_pix, radius,
+                                                  dx=xd - x0, dy=yd - y0)
     if not np.isfinite(snr):
         return keep
-    threshold = _null_contrast_threshold(box.shape, os_, smooth_pix, search_pix, max_false_positive)
+    threshold = _null_contrast_threshold(box.shape, os_, smooth_pix, radius, max_false_positive)
     keep.update(snr=float(snr), threshold=float(threshold))
     if snr < threshold:
         return keep
@@ -575,7 +604,7 @@ def refine_centre(data, x, y, search_pix=2.0, smooth_pix=0.5, oversample=4, max_
     xn = x0 + sub_x[j0] + dj / os_
     yn = y0 + sub_y[i0] + di / os_
     return dict(x=float(xn), y=float(yn), shift_pix=float(np.hypot(xn - x, yn - y)),
-                snr=float(snr), threshold=float(threshold), refined=True)
+                snr=float(snr), threshold=float(threshold), search_pix=radius, refined=True)
 
 
 # ------------------------------------------------------- PSF-convolved model
@@ -810,7 +839,8 @@ def run_profiles(target, table, datadir, profile_config=None, progress=True,
             comet, stack, per_star, summ = profile_frame(
                 path, x, y, row.get("msky", np.nan), hdr.get("GAIN", row.get("egain", 6.2)),
                 hdr.get("READNOI", row.get("readnoise", 9.7)), hdr.get("SATURATE", 6e4),
-                row.get("fwhm_pix", np.nan), pc)
+                row.get("fwhm_pix", np.nan), pc,
+                x_ref=row.get("x_ephem", np.nan), y_ref=row.get("y_ephem", np.nan))
         except Exception as exc:                                # noqa: BLE001
             log.warning("%s: profile failed on %s: %s", target.name, row["file"], exc)
             continue
