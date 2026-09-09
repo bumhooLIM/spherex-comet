@@ -252,6 +252,17 @@ def fit_production_rates(points: pd.DataFrame, params: ModelParams,
     good = masks["used"]
     n_dropped_neg = int(masks["negative"].sum())
     pts = points.loc[good].reset_index(drop=True)
+    if pts.empty:
+        # Every channel was masked -- in practice an accepted band whose continuum sits above
+        # all of its emission channels.  That is a continuum failure, not a measurement of Q,
+        # so the group is reported as not fitted rather than as a row of "not covered" species.
+        who = (f"{points['target'].iloc[0]} phase {int(points['phase'].iloc[0])}"
+               if len(points) else "empty input")
+        detail = (f"{n_dropped_neg} of {len(points)} channels more than "
+                  f"{cfg.drop_negative_sigma:g} sigma below zero"
+                  if cfg.drop_negative_sigma is not None else
+                  f"all {len(points)} channels non-finite or clipped")
+        raise ValueError(f"{who}: no channel survived the channel masks ({detail})")
     y = pts[ycol].to_numpy(dtype=float)
     sig = pts[ecol].to_numpy(dtype=float)
 

@@ -107,7 +107,7 @@ def filling_factor(x, method: str = "struve"):
         ik0 = _ik0_struve(xo) if method == "struve" else np.array([_ik0_quad(v) for v in xo])
         g[~tiny] = 1.0 / xo - k1(xo) + ik0
     f1 = x * g
-    return f1 if f1.size > 1 else float(f1[0])
+    return float(f1[0]) if f1.size == 1 else f1
 
 
 # ================================================================== Layers 0-2: geometry -> column

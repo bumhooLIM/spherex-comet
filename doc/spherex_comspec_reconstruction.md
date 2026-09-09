@@ -206,6 +206,13 @@ gain in accuracy.
 10. **Flag `a` is too rare at these apertures to test** (89 channels); its
     effectiveness was established in the photometry project's growth-curve
     study, not here.
+11. **A group can lose every channel to the negative-channel cut.**  499P phase 3
+    in `dc_all_lenient` keeps only its 4.7 µm band (2-point continuum, WARN), and
+    that continuum sits above all five of its emission channels, so the 1σ cut
+    leaves nothing to fit.  The fitter now reports such a group as not fitted,
+    with the reason in `not_fitted.csv`, instead of failing inside the filling
+    factor, and the figure stage skips it.  It is a continuum failure, not a
+    non-detection, and it is the one group that stopped the figure batch twice.
 
 ---
 

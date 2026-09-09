@@ -16,6 +16,7 @@ import warnings
 from pathlib import Path
 
 import numpy as np
+import pytest
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -103,6 +104,18 @@ def test_Q_identical_in_physical_and_distcorr_space():
     # carried by ~1.6 effective channels in this synthetic -- within its own 3 sigma.
     assert np.allclose(a.Q_fit[:2], truth[:2], rtol=0.25)
     assert np.all(np.abs(a.Q_fit - truth) < 3 * a.Q_err)
+
+
+def test_fit_reports_a_group_with_no_surviving_channel():
+    """An accepted band whose continuum sits above every emission channel must not fit: the
+    negative-channel cut empties the point list and the caller records the group as not fitted
+    (499P phase 3 of the lenient variant is the real case)."""
+    pts, p, _ = _synthetic_points()
+    pts["emis_raw_mjy"] = -5.0 * pts["emis_raw_err_mjy"]
+    pts["emis_mjy"] = pts["emis_raw_mjy"] * pts.distcorr_factor
+    with pytest.raises(ValueError, match="no channel survived"):
+        fit_production_rates(pts, p, FitConfig(drop_negative_sigma=1.0))
+    assert filling_factor(np.array([])).size == 0
 
 
 # ------------------------------------------------------------------ data-dependent tests

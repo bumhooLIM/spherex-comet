@@ -13,6 +13,8 @@ import textwrap
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence
 
+import warnings
+
 import numpy as np
 import pandas as pd
 import matplotlib
@@ -567,14 +569,15 @@ def save_variant_figures(variant: Variant, assignment: pd.DataFrame,
             if fits:
                 try:
                     pts = load_fit_input(variant.name, t, r_ap, int(ph), variant.fit)
-                except (ValueError, FileNotFoundError):
+                    params = ModelParams(rho_ap_km=r_ap)
+                    with warnings.catch_warnings():
+                        warnings.simplefilter("ignore")
+                        f = fit_production_rates(pts, params, variant.fit)
+                        c = model_curves(f, pts, params)
+                except (ValueError, FileNotFoundError) as exc:
+                    # the pipeline lists these groups in not_fitted.csv: no fit, no fit figure
+                    log.info("[%s] %s: no fit figure (%s)", variant.name, stem, str(exc)[:90])
                     continue
-                params = ModelParams(rho_ap_km=r_ap)
-                import warnings
-                with warnings.catch_warnings():
-                    warnings.simplefilter("ignore")
-                    f = fit_production_rates(pts, params, variant.fit)
-                    c = model_curves(f, pts, params)
                 fig = plot_fit(f, pts, c, variant.fit)
                 written.append(savefig(fig, dirs["fig_fit"] / f"{stem}.png"))
     F = load_fits(variant.name)
