@@ -163,7 +163,9 @@ change in Q between the two continuum spaces correlates with it (r = 0.48).
 
 Each variant is a complete, independent run under `data/comspec/<variant>/emission/`,
 `results/comspec/<variant>/` and `fig/comspec/<variant>/`.  A variant's `hash`
-(written to `run.meta.json`) identifies its full parameter set.
+(written to `run.meta.json`) identifies its full parameter set.  `config.VARIANTS`
+maps each name to its `Variant`, so a script drives one directly:
+`run_variant(VARIANTS["dc_all"])`, `save_variant_figures(VARIANTS["dc_all_lenient"], assignment)`.
 
 ## Outputs
 

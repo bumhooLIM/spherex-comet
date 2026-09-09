@@ -29,7 +29,7 @@ __all__ = [
     "KEY_RANGES", "BAND_CARRIER", "BAND_COLORS", "EMISSION_DTYPES", "SOURCEFLAG_PRIORITY",
     "RHO_TAU_REF_KM", "KAPPA_PUMP", "PLACEHOLDERS",
     "GroupingConfig", "ApertureConfig", "FlagPolicy", "ContinuumConfig", "ModelParams",
-    "FitConfig", "Variant", "DEFAULT_VARIANTS", "MAIN_VARIANT", "config_hash",
+    "FitConfig", "Variant", "DEFAULT_VARIANTS", "MAIN_VARIANT", "VARIANTS", "config_hash",
 ]
 
 # ---------------------------------------------------------------------- physical constants
@@ -309,6 +309,9 @@ DEFAULT_VARIANTS: Tuple[Variant, ...] = (
 )
 #: The variant whose products are the catalog's main result.
 MAIN_VARIANT = "dc_all"
+#: Name -> variant registry: the CLI and any script that drives one variant select it here,
+#: so a variant added to ``DEFAULT_VARIANTS`` becomes addressable by name everywhere at once.
+VARIANTS: Dict[str, Variant] = {v.name: v for v in DEFAULT_VARIANTS}
 
 
 # --------------------------------------------------------------------- placeholder registry

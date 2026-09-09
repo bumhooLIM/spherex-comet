@@ -29,14 +29,15 @@ from __future__ import annotations
 __version__ = "1.0.0"
 
 from .config import (BANDS, BAND_WINDOWS, DEFAULT_VARIANTS, EMISSION_WINDOWS, KEY_RANGES,
-                     MAIN_VARIANT, PLACEHOLDERS, SPECIES, ApertureConfig, ContinuumConfig,
-                     FitConfig, FlagPolicy, GroupingConfig, ModelParams, Variant)
+                     MAIN_VARIANT, PLACEHOLDERS, SPECIES, VARIANTS, ApertureConfig,
+                     ContinuumConfig, FitConfig, FlagPolicy, GroupingConfig, ModelParams, Variant)
 from .fitting import FitResult, fit_production_rates, model_curves
 from .pipeline import run_grouping, run_variant
 
 __all__ = [
     "__version__", "BANDS", "BAND_WINDOWS", "DEFAULT_VARIANTS", "EMISSION_WINDOWS", "KEY_RANGES",
-    "MAIN_VARIANT", "PLACEHOLDERS", "SPECIES", "ApertureConfig", "ContinuumConfig", "FitConfig",
+    "MAIN_VARIANT", "PLACEHOLDERS", "SPECIES", "VARIANTS", "ApertureConfig", "ContinuumConfig",
+    "FitConfig",
     "FlagPolicy", "GroupingConfig", "ModelParams", "Variant", "FitResult",
     "fit_production_rates", "model_curves", "run_grouping", "run_variant",
 ]

@@ -39,10 +39,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from spherex_comspec import __version__  # noqa: E402
 from spherex_comspec import directory as _dir  # noqa: E402
-from spherex_comspec.config import DEFAULT_VARIANTS, MAIN_VARIANT  # noqa: E402
+from spherex_comspec.config import MAIN_VARIANT, VARIANTS  # noqa: E402
 from spherex_comspec.logging_utils import get_logger, setup_logging  # noqa: E402
-
-VARIANTS = {v.name: v for v in DEFAULT_VARIANTS}
 
 
 def build_parser() -> argparse.ArgumentParser:
