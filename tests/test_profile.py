@@ -298,3 +298,14 @@ def test_refine_centre_rarely_moves_on_pure_noise():
         img = 100.0 + rng.normal(0, 1.0, (41, 41))
         moved += pf.refine_centre(img, 20.0 + rng.uniform(-.4, .4), 20.0 + rng.uniform(-.4, .4))["refined"]
     assert moved <= 4
+
+
+def test_refine_centre_reaches_a_far_nucleus_only_with_the_ephemeris():
+    # winpos dragged 3 px down a tail; the ephemeris sits 0.3 px from the nucleus
+    img, _, c = _synthetic_scene(m_true=1.0, nuc_flux=6000.0)
+    alone = pf.refine_centre(img, c + 3.0, c)
+    with_ref = pf.refine_centre(img, c + 3.0, c, x_ref=c - 0.3, y_ref=c + 0.2)
+    assert np.hypot(alone["x"] - c, alone["y"] - c) > 0.8          # 2 px disc cannot reach it
+    # separation 3.31 px -> half 1.65 + 2.0 = 3.65, rounded up to the half pixel
+    assert with_ref["refined"] and with_ref["search_pix"] == 4.0
+    assert np.hypot(with_ref["x"] - c, with_ref["y"] - c) < 0.25
