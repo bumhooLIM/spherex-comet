@@ -1,121 +1,135 @@
 # ZTF 68-comet survey — process and flag summary
 
-Run: 2026-09-07 17:25 → 2026-09-08 22:32 (one resume, one restart).
-Window 2025-03-01 → present, Vmag < 20, cutouts 5′ (10′ when Vmag_min < 14
-or Δ_min < 1 au).  Apertures ρ = 10/15/20/30/40 ×10³ km, each kept only where
-`PSF_FWHM < r_ap < 60″`.
-
-Numbers below are computed from `results/*/photometry_*.csv` and
-`results/*/profile_summary_*.csv` on the local disk.  The authoritative
-`survey_status.csv` and `survey_summary.md` live on the T7, which was
-unmounted when this was written.
+Survey 2026-09-07 17:25 → 2026-09-08 22:32.  Repair and re-reduction
+2026-09-09.  Window 2025-03-01 → present, Vmag < 20, cutouts 5′ (10′ when
+Vmag_min < 14 or Δ_min < 1 au).  Apertures ρ = 10/15/20/30/40 ×10³ km, each
+kept only where `PSF_FWHM < r_ap < 60″`.
 
 ## Coverage
 
 | | |
 |---|---|
 | designations processed | 68 / 68 |
-| with photometry | 55 |
-| no frames / no epochs | 13 |
-| unique frames measured | 8,336 |
-| measurement rows | 39,591 |
-| filters | ZTF_r 4,388 · ZTF_g 2,978 · ZTF_i 970 |
+| with photometry | 56 |
+| no data | 12 |
+| frames on disk | **8,730** |
+| download completeness | **8,734 / 8,845 = 98.75%** |
+| corrupt files | **0** |
+| measurement rows | 41,533 |
+| clean rows | 52.1% |
 
-Targets that produced no photometry — either nothing reached Vmag 20, or ZTF
-never covered the positions that did:
+### The 12 targets with no data
 
-`161P · 229P · 508P · 2P · 2014UN271 · 2019U5 · 2022R3 · 2023U1 · 2024G7 ·
-2024T5 · 2024W1 · 2025O2 · 2025UX109`
+Three had **no epoch reaching Vmag 20** — the directory is empty by design:
+`2014UN271` (Bernardinelli-Bernstein, ~17 au), `2022R3`, `229P`, `2025UX109`.
 
-`2P` is a special case: its 166 frames were queried earlier at Vmag < 21 and
-are on disk, but the survey ran it at Vmag < 20 and found nothing.
+Nine had **epochs that passed the cut but no ZTF coverage** at those positions:
+`161P` (17/112 epochs), `508P` (26), `2024W1` (26), `2025O2` (40), `2019U5`
+(99), `2024G7` (109), `2023U1` (112), `2024T5` (112).
+
+`2P` was recovered: its 166 frames were queried earlier at Vmag < 21, and the
+repair pass adopted them, so it now carries full photometry despite the survey
+scoring it `no_frames` at Vmag < 20.
+
+### The 111 frames that could not be downloaded
+
+Both kinds are permanent; a second repair pass recovered **zero** of them.
+
+| cause | frames |
+|---|---|
+| HTTP 404 — not in the archive | 80 |
+| HTTP 500 — `Cutout does not overlap image` | 31 |
+
+The 500s are **not** server faults.  IRSA raises `ibe::HttpException` at
+`stream_subimage.cxx:331` when the requested centre falls outside the image
+footprint: the IBE metadata search matched the frame, but the pixel data does
+not reach the comet.  Those frames would have failed `flag_outside` anyway.
 
 ## Aperture scale test
 
-| ρ (km) | measured | skipped |
-|---|---|---|
-| 10,000 | 7,340 | 996 (11.9%) |
-| 15,000 | 8,104 | 232 (2.8%) |
-| 20,000 | 8,218 | 118 (1.4%) |
-| 30,000 | 8,045 | 291 (3.5%) |
-| 40,000 | 7,884 | 452 (5.4%) |
+| ρ (km) | measured | skipped | clean |
+|---|---|---|---|
+| 10,000 | 7,731 | 999 (11.4%) | 53.6% |
+| 15,000 | 8,498 | 232 (2.7%) | 58.8% |
+| 20,000 | 8,612 | 118 (1.4%) | 57.9% |
+| 30,000 | 8,439 | 291 (3.3%) | 49.2% |
+| 40,000 | 8,253 | 477 (5.5%) | 40.8% |
 
-The 10,000 km aperture is the one that most often falls below the seeing disc;
-40,000 km is the one that most often exceeds the 1′ ceiling.  20,000 km is the
-best-sampled aperture and is the sensible default for cross-target comparison.
+10,000 km is the aperture most often below the seeing disc; 40,000 km most
+often exceeds the 1′ ceiling or reaches a frame edge.  **20,000 km is the
+best-sampled aperture** (98.6% of frames) and the right default for
+cross-target comparison; 15,000 km has the highest clean fraction.
 
 ## Flag statistics
 
-53.0% of all measurement rows are clean (`quality_ok`, no critical flag).
-
 | CRITICAL flag | rows | share |
 |---|---|---|
-| contaminated | 7,970 | 20.1% |
-| lowsnr | 6,167 | 15.6% |
-| sky_edge | 4,881 | 12.3% |
-| centroid | 3,754 | 9.5% |
-| undersampled | 2,924 | 7.4% |
-| negative_flux | 1,322 | 3.3% |
-| aperture_edge | 1,207 | 3.0% |
-| outside | 893 | 2.3% |
+| contaminated | 8,279 | 19.9% |
+| lowsnr | 7,012 | 16.9% |
+| sky_edge | 5,207 | 12.5% |
+| centroid | 3,867 | 9.3% |
+| undersampled | 2,957 | 7.1% |
+| negative_flux | 1,470 | 3.5% |
+| aperture_edge | 1,268 | 3.1% |
+| outside | 923 | 2.2% |
 
 | ADVISORY flag | rows | share |
 |---|---|---|
-| color_default | 13,776 | 34.8% |
-| nan_pixels | 678 | 1.7% |
+| color_default | 14,373 | 34.6% |
+| nan_pixels | 696 | 1.7% |
 
 Advisory flags qualify a measurement without invalidating it.  `color_default`
-dominates simply because most frames are single-band, so no g−r colour is
-available for the colour term.
+dominates because most frames are single-band, leaving no g−r for the colour
+term.
 
-Clean rate falls off at both aperture extremes — 53.8% at 10,000 km, peaking at
-59.6% at 15,000 km, down to 42.0% at 40,000 km, where the aperture more often
-reaches a frame edge or swallows a field star.
-
-**Contamination is the largest single cause of rejection.**  One row in five
+**Contamination is the single largest cause of rejection**: one row in five
 fails the Gaia DR3 test (G_eff within r_ap + FWHM brighter than 30% of the
-comet's expected V).  That is the intended behaviour for a survey along the
-ecliptic, but it means a fifth of the raw measurements are unusable rather than
-merely noisy.
+comet's expected V).  For a survey along the ecliptic that is expected, but it
+means a fifth of the raw measurements are unusable rather than merely noisy.
 
 ## Coma radial profiles
 
-Available for 9 targets only (see the gap noted below): 942 frames, 524 clean.
+All 56 targets: **7,698 frames, 4,145 clean.**
 
-| target | n | comet slope | star slope | excess at 3·FWHM | ρ_max (km) |
-|---|---|---|---|---|---|
-| 24P | 240 | −1.07 | −4.43 | 70.7 | 6,179 |
-| 2025K1 | 83 | −1.60 | −4.55 | 53.0 | 7,696 |
-| 2025L1 | 18 | −0.22 | −4.27 | 141.3 | 8,805 |
-| 2025L2 | 15 | −2.49 | −4.12 | 16.2 | 20,320 |
-| 2025M2 | 28 | −3.52 | −4.27 | 26.0 | 34,569 |
-| 2025Q3 | 54 | −2.30 | −4.25 | 10.6 | 13,232 |
-| 2025R1 | 36 | −2.49 | −4.16 | 18.8 | 13,593 |
-| 2025R2 | 43 | −0.98 | −4.15 | 99.5 | 8,653 |
-| 2025W2 | 7 | −1.81 | −4.57 | 28.9 | 7,039 |
+| | |
+|---|---|
+| median comet slope | **−1.73** |
+| median field-star slope | **−4.39** |
+| comet shallower than stars | **3,964 / 4,145 = 95.6%** |
 
-Median comet slope **−1.23** against a median field-star slope of **−4.41**, and
-**501 of 524** clean frames show the comet shallower than the stars in the same
-image.  The comae are unambiguously extended, and the ensemble slope sits close
-to the −1 expected for steady-state dust outflow.
+The comae are unambiguously extended, and the ensemble slope brackets the −1
+expected for steady-state dust outflow.
 
-The steep outliers (2025M2 at −3.52, 2025L2 and 2025R1 at −2.49) are the faint,
-distant frames where the resolution study already identified sky subtraction as
-the dominant bias, not a genuinely compact coma.
+| target | n | comet | stars | ρ_max (km) |
+|---|---|---|---|---|
+| 2025M2 | 28 | −3.52 | −4.27 | 34,569 |
+| 2023V1 | 18 | −2.81 | −4.30 | 37,323 |
+| 2024G4 | 157 | −2.70 | −4.51 | 32,765 |
+| 63P | 23 | −2.59 | −4.67 | 13,712 |
+| 491P | 144 | −2.54 | −4.58 | 23,057 |
+| … | | | | |
+| 24P | 240 | −1.07 | −4.43 | 6,179 |
+| 2P | 54 | −1.07 | −4.40 | 23,453 |
+| 210P | 97 | −1.06 | −4.55 | 9,203 |
+| 2025R2 | 43 | −0.98 | −4.15 | 8,653 |
+| 2025L1 | 18 | −0.22 | −4.27 | 8,805 |
 
-## Known gaps
+The steep end is dominated by faint, distant targets, where the resolution
+study (`doc/profile_resolution_24P.md`) showed sky subtraction — not a compact
+coma — is the controlling bias.  Slopes near or below −2.5 should be read as
+upper limits on steepness, not as measurements of coma structure.
 
-1. **Radial profiles are missing for 46 of the 55 targets with data.**  The
-   profile step was added to the package after the batch process had already
-   started, and a running Python process keeps the modules it imported.  Only
-   24P (run by hand) and the eight targets processed after the 20:01 restart
-   have profiles.  Re-running `--steps profile figures` fills this in.
-2. **2024E1 and 240P were queried over too short a window.**  `--end` was
-   applied only when passed, so a stale per-target `end_date` in `config.py`
-   won: 2024E1 stopped at 2025-10-30, missing its 2026-01-20 perihelion and the
-   entire post-perihelion leg.  Fixed in `survey.py`; both need re-querying.
-3. **Incomplete downloads.**  Roughly 300 frames failed, ~131 of them on 235P
-   during a three-hour IRSA outage on the night of 09-07/08.  404s are permanent
-   archive gaps; the 5xx failures are recoverable and IRSA has since recovered.
-4. **Targets 1–12 were processed before the perihelion-axis change** and still
-   carry signed-r_h Afρ plots.
+## Caveats
+
+- **2024E1 has mixed cutout sizes.**  Its re-query found Vmag_min = 13.62, so
+  the adaptive rule now selects 10′; the 116 frames already on disk are 5′ and
+  only the 2 new ones are 10′.  Harmless — the largest aperture spans ~32″ at
+  Δ = 1.7 au, well inside a 300″ box — but worth knowing before comparing sky
+  annuli across its frames.
+- **2024E1's post-perihelion leg is two frames.**  Its window had been
+  truncated at 2025-10-30 by a stale `end_date`; re-querying the full range
+  took it from 49 to 112 passing epochs but added only 2 frames.  At
+  q = 0.566 AU the comet was in solar conjunction from Palomar through
+  perihelion (2026-01-20) and was caught only twice on the way out.
+- **240P gained nothing** from the same fix: 112/112 epochs now pass instead of
+  98/98, but ZTF observed none of the extra window.

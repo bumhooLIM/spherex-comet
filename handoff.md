@@ -1,43 +1,47 @@
 # Handoff
 
 ## Current State
-The 68-comet survey is **complete** (2026-09-07 17:25 → 2026-09-08 22:32).
-55 targets have photometry, 13 produced no frames or no epochs at Vmag < 20.
-8,336 frames, 39,591 measurement rows across five apertures, 53.0% clean.
-Process and flag statistics: `doc/survey_summary_68comets.md`.
+The 68-comet survey is **complete and fully reduced**.  Full statistics:
+`doc/survey_summary_68comets.md`.
 
-Coma profiles confirm extended comae: median slope −1.23 vs −4.41 for field
-stars, 501/524 clean frames shallower than the stars in the same image.
-
-**The T7 is currently unmounted.** Every step below reads raw FITS from it, so
-mount it first and confirm `ZTFCOMET_DATA=/Volumes/T7/data/ztf-comet` resolves
-before starting anything. `survey.py` refuses the local fallback root only when
-the env var is unset — with it set to a missing path it will not protect you.
+- 56 targets with photometry, 12 with no data (3 never reach Vmag 20, 9 have
+  no ZTF coverage at the positions that do).
+- Downloads **98.75% complete** (8,734 / 8,845), 0 corrupt.  The 111 missing
+  are permanent: 80 archive 404s and 31 that IRSA rejects with "Cutout does not
+  overlap image" — the comet falls off the quadrant, so they would have tripped
+  `flag_outside` anyway.  Two repair passes recovered zero of them; do not
+  retry a third time.
+- 41,533 measurement rows over five apertures, 52.1% clean.  Contamination is
+  the largest rejection cause at 19.9%.
+- Radial profiles for **all 56** targets: median comet slope −1.73 against
+  −4.39 for field stars, 95.6% of clean frames shallower than the stars.
+- Afρ figures for every target use the r_h − q abscissa with the Kepler date
+  axis; the targets 1–12 that were stuck on signed-r_h have been regenerated.
 
 ## Next Steps
-Run in this order, all from the project root with ZTFCOMET_DATA pinned:
+Nothing is outstanding from the survey itself.  Open scientific questions:
 
-1. `survey.py --steps download --no-resume` — repair pass. ~300 frames missing,
-   131 of them 235P from the 09-07/08 IRSA outage. 404s are permanent; the 5xx
-   are recoverable and IRSA has recovered. Re-check fields 000616 c02 q4 and
-   000375 c10, which timed out repeatedly while neighbours served fine.
-2. Re-query `2024E1` and `240P` — their windows were truncated by a stale
-   `end_date` in `config.py`. 2024E1 is missing its 2026-01-20 perihelion and
-   all post-perihelion data, so its Afρ figure currently shows one leg only.
-3. `survey.py --steps profile figures --no-resume` — profiles exist for 9 of 55
-   targets; this also regenerates the targets 1–12 figures still on signed-r_h.
-4. `main.py 2P --steps phot profile figures` — 2P's 166 frames are Vmag < 21
-   data; the survey scored it `no_frames` at Vmag < 20. Note the exception.
+1. Extend `profile_resolution.py` beyond 24P — does 1/ρ hold past ~12,000 km
+   for the targets with large ρ_max (2023V1 37,000 km; 2025M2 34,600 km)?
+   The steep-slope end of the summary table is the sample to test.
+2. Decide whether slopes below about −2.5 should be excluded from any
+   population analysis, given they track frame depth rather than coma
+   structure.
+3. `fix/horizons-query-correctness` is well ahead of `master` and has never
+   been merged.  Consider opening the PR.
 
 ## Blind Spots / Dead Ends
-- A **running process keeps its imported modules**: the profile step and the
-  perihelion axis were both added mid-run and silently did not apply. Restart
-  the batch after changing the package, or accept that only later targets get it.
+- A **running process keeps its imported modules**.  The profile step and the
+  perihelion axis were both added mid-run and silently did not apply to
+  targets already in flight; both needed a full re-reduction afterwards.
+  Restart the batch after changing the package.
+- **`--no-resume` rewrites every status row**, including targets it cannot
+  act on.  A download-only pass relabelled the 12 no-data targets `no_urls`,
+  destroying the `no_frames` / `no_epochs` distinction; it was recovered from
+  the run logs.  Read the logs, not just the status CSV, when reconstructing.
 - The run **hung 54 min on one Horizons call** at 0% CPU while the service
-  answered fresh requests in 0.8 s. astroquery's 30 s timeout never fired.
-  `socket.setdefaulttimeout(300)` in `survey.py` now bounds this.
-- macOS writes `._name` AppleDouble sidecars on the exFAT T7. They matched the
-  FITS glob and were reported as half the frames being unreadable. Filtered in
-  `phot.py`; do not "fix" that by re-downloading.
-- Contamination is the top rejection cause at 20.1% — expected along the
-  ecliptic, not a bug.
+  answered fresh requests in 0.8 s.  `socket.setdefaulttimeout(300)` in
+  `survey.py` now bounds this.
+- macOS writes `._name` AppleDouble sidecars on the exFAT T7; they matched the
+  FITS glob and were reported as half the frames being unreadable.  Filtered in
+  `phot.py` — do not "fix" that by re-downloading.
