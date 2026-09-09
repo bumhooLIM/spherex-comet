@@ -286,3 +286,15 @@ def test_refine_centre_leaves_an_on_peak_comet_alone():
     img, _, c = _synthetic_scene(m_true=1.0, nuc_flux=6000.0)
     cen = pf.refine_centre(img, c, c)
     assert cen["shift_pix"] < 0.2
+
+
+def test_refine_centre_rarely_moves_on_pure_noise():
+    # The contrast statistic is a max over patches minus one sample, so it is
+    # biased high on noise; the guard must hold well below the rate that a
+    # ring-based noise estimate allowed (17.5% at 3 sigma).
+    rng = np.random.default_rng(3)
+    moved = 0
+    for _ in range(200):
+        img = 100.0 + rng.normal(0, 1.0, (41, 41))
+        moved += pf.refine_centre(img, 20.0 + rng.uniform(-.4, .4), 20.0 + rng.uniform(-.4, .4))["refined"]
+    assert moved <= 4
