@@ -1,50 +1,43 @@
 # Handoff
 
 ## Current State
-`ztfcomet` v0.3 — 68-comet survey **running unattended** (resumed 21:25 on
-2026-09-07, `ZTFCOMET_DATA` pinned to `/Volumes/T7/data/ztf-comet`;
-log `survey_log_20260907T212513.log`, ~18/68 at 23:20, ~13 min/target).
+The 68-comet survey is **complete** (2026-09-07 17:25 → 2026-09-08 22:32).
+55 targets have photometry, 13 produced no frames or no epochs at Vmag < 20.
+8,336 frames, 39,591 measurement rows across five apertures, 53.0% clean.
+Process and flag statistics: `doc/survey_summary_68comets.md`.
 
-- Package: `directory`, `config`, `query`, `horizons`, `cutout`, `phot`, `gaia`,
-  `orbit`, `profile`, `plotting`. 135 tests. Commits on `fix/horizons-query-correctness`.
-- `notebooks/survey.py`: query → adaptive cutout (5′; 10′ if Tmag<14 or Δ<1 au) →
-  download → re-verify on disk → multi-aperture Afρ (10/15/20/30/40k km, only where
-  FWHM < r_ap < 1′) → radial profile → figures. Resumable via `survey_status.csv`.
-- Afρ vs r_h figures: x = r_h − q signed by leg, perihelion marked, T−Tp axis on
-  top (Kepler, validated to 0.01 d); clean frames only.
-- `ztfcomet.profile`: comet SB profile vs ≤20 field stars (both ×4 oversampled),
-  naive slope + PSF-convolved nucleus/coma model with optional free sky.
-  `doc/profile_resolution_24P.md`: inbound steepness is sky error on faint frames
-  (not ρ-range, not nucleus); oversampling changes nothing; model+sky gives −1.01;
-  1/ρ holds to ≥12 000 km (lower bound).
-- Data on T7: 24P 295, 2P 166 (Vmag<21 exception), plus 10P…210P; ~35 GB.
+Coma profiles confirm extended comae: median slope −1.23 vs −4.41 for field
+stars, 501/524 clean frames shallower than the stars in the same image.
 
-## Next Steps (in order, once `Survey complete` appears in the log)
-1. Repair pass over targets with `complete == False`: `survey.py --steps download
-   phot profile figures --no-resume` (404s are permanent; 500/504s retry).
-2. `survey.py --steps profile figures --no-resume` — targets 1–12 ran on old code
-   (signed-r_h plots, no profile step). Regenerates everything with current code.
-3. 2P: `main.py 2P --steps phot profile figures` (its 166 files are Vmag<21 data;
-   the survey marks it `no_frames` at Vmag<20). Note the exception in the summary.
-4. Read `survey_summary.md`; report process + flag statistics. Then
-   `profile_resolution.py --target 29P` etc.: does 1/ρ hold beyond 12 000 km?
+**The T7 is currently unmounted.** Every step below reads raw FITS from it, so
+mount it first and confirm `ZTFCOMET_DATA=/Volumes/T7/data/ztf-comet` resolves
+before starting anything. `survey.py` refuses the local fallback root only when
+the env var is unset — with it set to a missing path it will not protect you.
+
+## Next Steps
+Run in this order, all from the project root with ZTFCOMET_DATA pinned:
+
+1. `survey.py --steps download --no-resume` — repair pass. ~300 frames missing,
+   131 of them 235P from the 09-07/08 IRSA outage. 404s are permanent; the 5xx
+   are recoverable and IRSA has recovered. Re-check fields 000616 c02 q4 and
+   000375 c10, which timed out repeatedly while neighbours served fine.
+2. Re-query `2024E1` and `240P` — their windows were truncated by a stale
+   `end_date` in `config.py`. 2024E1 is missing its 2026-01-20 perihelion and
+   all post-perihelion data, so its Afρ figure currently shows one leg only.
+3. `survey.py --steps profile figures --no-resume` — profiles exist for 9 of 55
+   targets; this also regenerates the targets 1–12 figures still on signed-r_h.
+4. `main.py 2P --steps phot profile figures` — 2P's 166 frames are Vmag < 21
+   data; the survey scored it `no_frames` at Vmag < 20. Note the exception.
 
 ## Blind Spots / Dead Ends
-- **A spun-down SSD answers `is_dir()` False once**; a resume silently restarted
-  on the local fallback. Resolver retries, survey refuses fallback; pin `ZTFCOMET_DATA`.
-- **Horizons clips `targetname` at 31 chars** ("Bernardinelli-Bernstein (C/2014").
-  `verify_targetname` prefix-matches clipped names; fragments still fail.
-- **Horizons rejects an all-identical TLIST** ("Bad dates"): dedupe, join on JD.
-  astroquery's ValueError is transient unless it carries an ambiguity *listing*.
-- **Signed r_h is wrong** (unreachable band between −q and +q): use r_h − q; beyond
-  aphelion is NaN, not half a period.
-- **Native annulus means are biased for steep profiles**; oversample comet AND
-  stars, normalise within 1.5 px. Oversampling adds no information.
-- **Formal sky error (0.07 DN) understates the real systematic ~50×**; few-DN
-  background structure tilts faint outer profiles. Fit sky as a free term.
-- **A cache keyed on a rounded parameter gives least_squares a zero gradient.**
-- **pandas parses "2024E1" as a float** in a homogeneous column: every `read_csv`
-  with a target column needs `dtype={"target": str}` or resume reprocesses it.
-- **Contamination flagging scales with aperture**: 30k/40k km rows mostly flagged
-  on bright low-latitude targets.
-- `sep.winpos` returns 3 values; IRSA sends 200+HTML (check FITS magic); bare `"2P"` → Styx: `id_type="smallbody"`.
+- A **running process keeps its imported modules**: the profile step and the
+  perihelion axis were both added mid-run and silently did not apply. Restart
+  the batch after changing the package, or accept that only later targets get it.
+- The run **hung 54 min on one Horizons call** at 0% CPU while the service
+  answered fresh requests in 0.8 s. astroquery's 30 s timeout never fired.
+  `socket.setdefaulttimeout(300)` in `survey.py` now bounds this.
+- macOS writes `._name` AppleDouble sidecars on the exFAT T7. They matched the
+  FITS glob and were reported as half the frames being unreadable. Filtered in
+  `phot.py`; do not "fix" that by re-downloading.
+- Contamination is the top rejection cause at 20.1% — expected along the
+  ecliptic, not a bug.
