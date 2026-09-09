@@ -393,7 +393,8 @@ def plot_summary_Q(fits: pd.DataFrame, title: str = ""):
                ylabel=r"$Q$ [molecules s$^{-1}$]" if s == "H2O" else "")
         ax.set_title(f"Q({PRETTY[s]})   ({len(det)} robust detections)", pad=14)
         ax.grid(alpha=0.3, which="both")
-        ax.legend(fontsize=12)
+        # the legend can reach a dozen entries (aperture x status x source): keep it off the data
+        ax.legend(fontsize=11, ncol=2, loc="upper center", bbox_to_anchor=(0.5, -0.16), frameon=False)
     fig.suptitle(title or "Gas production rates vs heliocentric distance", y=1.02)
     fig.tight_layout()
     return fig

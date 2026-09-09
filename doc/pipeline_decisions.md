@@ -153,8 +153,11 @@ Before the rule, 16 fitted groups had CO detected with H₂O not in the model, s
 4.63 µm hot band was absorbed into Q(CO); now 1.  Robust H₂O rose from 28 to 40
 (17 from hot bands: 24P phases 3–5 at 1.19–1.21 au, 306P phases 2–3, 2024 E1,
 2025 L1, …), CO fell from 21 to 18 and the CO values shared by both runs dropped
-by 9 % (0.73–1.03), the removed contamination.  Two of the 17 hot-band values are
-≥ 3σ; ten of the 23 main-band ones are.
+by 9 % (0.73–1.03), the removed contamination.  The hot-band values are weaker than
+the main-band ones (median 1.8σ against 2.9σ): ten of the 17 lie inside 3 au and two
+of those reach 3σ (24P phases 4 and 5); the seven beyond 3 au (up to 29P at 6.3 au
+and 2019 U5 at 9 au) are all 1–2σ with errors comparable to the value, and are
+not to be quoted as water production rates without a distance cap or the 3σ tier.
 
 ### 7.6 Previous photometry
 
@@ -177,7 +180,9 @@ the 4.3 µm band of the brightest comets by 10–40 %.
 5. **`detected` means ≥ 1σ**; the robust counts add n_eff ≥ 2, and 23 comets have a
    ≥ 3σ robust detection.
 6. **Hot-band Q(H₂O) is provisional** (placeholder g-factors, shared feature with
-   CO); it is labelled everywhere and easy to exclude (`h2o_source == "main"`).
+   CO) and, beyond 3 au, weak (seven values, none ≥ 3σ).  It is labelled everywhere
+   and easy to exclude (`h2o_source == "main"`); a `max_rh_au` in `H2O_HOT_RANGE`
+   or the 3σ tier is the next decision.
 7. **FAIL is 30 % of band-rows**, mostly one-sided continua; the 2.7 µm blue edge
    at 2.60 µm loses 6.7 % of the H₂O complex.
 8. **A group can lose every channel to the 1σ negative cut** (499P phase 3, 2024 L5
