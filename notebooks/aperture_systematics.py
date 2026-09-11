@@ -7,10 +7,10 @@ ratio Afrho(10k)/Afrho(40k) climbs from 1.3 at 2 au to 2.2 at 4.5 au.  For a
 1/rho coma that ratio is 1 at every distance, so something in the photometry
 depends on Delta.  Four candidates are tested from the tables alone:
 
-1. sky over-subtraction of coma light in the annulus -- the annulus scales
-   with the aperture (3 to 8.6 aperture radii), so for a 1/rho coma the lost
-   fraction, rho/(2 rho_sky) = 0.17, is the same for every aperture and
-   cancels in the ratio;
+1. sky over-subtraction of coma light in the annulus -- the annulus runs
+   from 3 rho to 4 rho + 20 px with a median estimator, so for a 1/rho coma
+   it removes 7.8% of the coma flux at 10k and 11.8% at 40k: a 4%
+   differential, in the direction of lowering the ratio;
 2. the point-source aperture correction applied to an extended source --
    tabulated per row (`apcor`), a few per cent at most;
 3. resolution -- rho/FWHM per aperture, and the PSF-corrected profile slope

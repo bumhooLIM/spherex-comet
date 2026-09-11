@@ -40,10 +40,11 @@ annulus.
 
 ## The four candidates
 
-1. **Coma light in the sky annulus.**  The annulus scales with the aperture
-   (3.0 to 8.6 aperture radii for every ρ), so for a 1/ρ coma the flux lost
-   to over-subtraction, ρ/(2 ρ_sky) = 0.167, is identical for all five
-   apertures and cancels in the ratio.  Not this.
+1. **Coma light in the sky annulus.**  The annulus runs from 3ρ to
+   4ρ + 20 px and takes the median, which for a 1/ρ coma removes
+   ½ ρ/r_med of the coma flux: 7.8% at 10,000 km, 11.8% at 40,000 km
+   (`doc/afrho_background_annulus.md`).  A 4% differential, in the
+   direction of *lowering* the ratio.  Not this.
 2. **Aperture correction.**  A point-source correction applied to an
    extended source over-brightens the small aperture; the applied value
    grows from −0.011 to −0.065 mag with distance.  Six per cent at most,
