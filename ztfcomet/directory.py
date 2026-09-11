@@ -143,14 +143,56 @@ def data_dir(targetname: str | None = None, create: bool = True) -> Path:
     return _sub(DATA_ROOT, targetname, create)
 
 
-def result_dir(targetname: str | None = None, create: bool = True) -> Path:
-    """Directory holding photometry tables for *targetname*."""
-    return _sub(RESULT_ROOT, targetname, create)
+SUBJECTS = ("photometry", "profile", "afrho")
 
 
-def fig_dir(targetname: str | None = None, create: bool = True) -> Path:
-    """Directory holding figures for *targetname*."""
-    return _sub(FIG_ROOT, targetname, create)
+def _subject(subject: str) -> str:
+    if subject not in SUBJECTS:
+        raise ValueError(
+            f"unknown output subject {subject!r}: results and figures are organised by "
+            f"subject {SUBJECTS}, not by target.  Use result_path()/fig_path() with "
+            "targetname= for a per-target file, or fig_dir(subject, targetname) for bulk images.")
+    return subject
+
+
+def result_dir(subject: str, create: bool = True) -> Path:
+    """``results/<subject>/`` -- outputs are grouped by subject, not by target.
+
+    A target name here is an error on purpose.  The tree used to be
+    per-target, and a stale call site should fail rather than quietly rebuild
+    that layout beside the new one.
+    """
+    return _sub(RESULT_ROOT / _subject(subject), None, create)
+
+
+def fig_dir(subject: str, targetname: str | None = None, create: bool = True) -> Path:
+    """``fig/<subject>/``, or ``fig/<subject>/<target>/`` for bulk per-frame images."""
+    return _sub(FIG_ROOT / _subject(subject), targetname, create)
+
+
+def result_path(subject: str, filename: str, targetname: str | None = None,
+                create: bool = True) -> Path:
+    """``results/<subject>/<target>_<filename>``, or ``<filename>`` for a survey-level table."""
+    name = f"{target_slug(targetname)}_{filename}" if targetname else filename
+    return result_dir(subject, create) / name
+
+
+def fig_path(subject: str, filename: str, targetname: str | None = None,
+             create: bool = True) -> Path:
+    """``fig/<subject>/<target>_<filename>``, or ``<filename>`` for a survey-level figure."""
+    name = f"{target_slug(targetname)}_{filename}" if targetname else filename
+    return fig_dir(subject, None, create) / name
+
+
+def photometry_path(targetname: str, create: bool = True) -> Path:
+    """``results/photometry/<target>.csv`` -- the one table everything downstream reads."""
+    return result_dir("photometry", create) / f"{target_slug(targetname)}.csv"
+
+
+def profile_paths(targetname: str, create: bool = True) -> dict:
+    """The three profile tables of a target, keyed ``profile``, ``summary``, ``stars``."""
+    return {k: result_path("profile", f"{k}.csv", targetname, create)
+            for k in ("profile", "summary", "stars")}
 
 
 def describe() -> str:

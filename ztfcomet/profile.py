@@ -856,7 +856,7 @@ def run_profiles(target, table, datadir, profile_config=None, progress=True,
 
         if plots:
             try:
-                figdir = d.fig_dir(target.name) / "profile"
+                figdir = d.fig_dir("profile", target.name)
                 figdir.mkdir(parents=True, exist_ok=True)
                 _plot_frame(comet, stack, summ, base, figdir / f"{Path(row['file']).stem}.png", dpi)
             except Exception as exc:                            # noqa: BLE001
@@ -868,16 +868,15 @@ def run_profiles(target, table, datadir, profile_config=None, progress=True,
 
     if save and not profiles.empty:
         slug = d.target_slug(target.name)
-        out = d.result_dir(target.name)
-        profiles.to_csv(out / f"profile_{slug}.csv", index=False)
-        summary.to_csv(out / f"profile_summary_{slug}.csv", index=False)
+        paths = d.profile_paths(target.name)
+        profiles.to_csv(paths["profile"], index=False)
+        summary.to_csv(paths["summary"], index=False)
         if not stars.empty:
-            stars.to_csv(out / f"profile_stars_{slug}.csv", index=False)
+            stars.to_csv(paths["stars"], index=False)
         log.info("%s: profiles for %d frames -> %s", target.name, len(summary), out)
     if plots and not summary.empty:
         try:
-            _plot_summary(target, profiles, summary, d.fig_dir(target.name)
-                          / f"profile_summary_{d.target_slug(target.name)}.png",
+            _plot_summary(target, profiles, summary, d.fig_path("profile", "summary.png", target.name),
                           elements=elements)
         except Exception as exc:                                # noqa: BLE001
             log.warning("%s: profile summary plot failed: %s", target.name, exc)

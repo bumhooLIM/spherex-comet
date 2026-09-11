@@ -60,8 +60,8 @@ KM_EDGES = np.geomspace(500, 50000, 25)
 
 
 def survey_targets():
-    return sorted(Path(p).parent.name
-                  for p in glob.glob(str(zc.RESULT_ROOT / "*" / "profile_summary_*.csv")))
+    return sorted(Path(p).name[:-len("_summary.csv")]
+                  for p in glob.glob(str(zc.result_dir("profile") / "*_summary.csv")))
 
 
 # ------------------------------------------------------------------ fits
@@ -244,8 +244,8 @@ def main(argv=None):
               f"({time.time() - t0:.0f} s)", flush=True)
     fits = pd.concat([f for f in fits if len(f)], ignore_index=True)
     ratio = pd.concat([r for r in ratios if len(r)], ignore_index=True)
-    fits.to_csv(zc.RESULT_ROOT / "profile_survey_fits.csv", index=False)
-    ratio.to_csv(zc.RESULT_ROOT / "profile_survey_ratio.csv", index=False)
+    fits.to_csv(zc.result_path("profile", "survey_fits.csv"), index=False)
+    ratio.to_csv(zc.result_path("profile", "survey_ratio.csv"), index=False)
 
     good = fits["ok"].fillna(False) & ~fits["at_bound"].fillna(True)
     print(f"\nframes fitted {len(fits)}, converged off the sky bound {int(good.sum())}, "
@@ -280,14 +280,14 @@ def main(argv=None):
 
     tab = per_target(fits, ratio)
     tab["n_offpeak"] = tab["target"].map(offpeak)
-    tab.to_csv(zc.RESULT_ROOT / "profile_survey_targets.csv", index=False)
+    tab.to_csv(zc.result_path("profile", "survey_targets.csv"), index=False)
     print("\n=== per target (sorted by rho at 10 px) ===")
     print(tab.sort_values("rho10_med", ascending=False)
           .to_string(index=False, float_format=lambda v: f"{v:.2f}"))
 
-    figdir = zc.fig_dir("survey")
-    fig_slope(fits, figdir / "profile_survey_slope.png")
-    fig_ratio(fits, ratio, figdir / "profile_survey_ratio.png")
+    figdir = zc.fig_dir("profile")
+    fig_slope(fits, figdir / "survey_slope.png")
+    fig_ratio(fits, ratio, figdir / "survey_ratio.png")
     print("\nfigures written to", figdir)
     return 0
 

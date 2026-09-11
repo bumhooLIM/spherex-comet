@@ -36,12 +36,11 @@ from ztfcomet import rcparams  # noqa: F401
 
 
 def load(target):
-    res = zc.result_dir(target, create=False)
-    slug = zc.target_slug(target)
+    paths = zc.profile_paths(target, create=False)
     S = {"target": str}
-    prof = pd.read_csv(res / f"profile_{slug}.csv", dtype=S)
-    summ = pd.read_csv(res / f"profile_summary_{slug}.csv", dtype=S)
-    phot = pd.read_csv(res / f"photometry_{slug}.csv", dtype=S)
+    prof = pd.read_csv(paths["profile"], dtype=S)
+    summ = pd.read_csv(paths["summary"], dtype=S)
+    phot = pd.read_csv(zc.photometry_path(target, create=False), dtype=S)
     phot = phot[np.isclose(phot["rho_km"], phot["rho_km"].min())].drop_duplicates("file")
     summ = summ.merge(phot[["file", "ssky", "nsky", "snr", "msky"]], on="file", how="left")
     summ["leg"] = np.where(summ["r_rate"] < 0, "pre", "post")
@@ -155,7 +154,7 @@ def refit_methods(prof, summ, rho_max_km, oversample=4):
 # --------------------------------------------------- F: survey feasibility
 def survey_feasibility(rho_max_km, fit_rmin_fwhm=1.5, min_annuli=4, half_width=0.25):
     rows = []
-    for path in sorted(glob.glob(str(zc.RESULT_ROOT / "*" / "photometry_*.csv"))):
+    for path in sorted(glob.glob(str(zc.result_dir("photometry") / "*.csv"))):
         t = pd.read_csv(path, dtype={"target": str})
         if t.empty or "delta" not in t:
             continue
@@ -166,7 +165,7 @@ def survey_feasibility(rho_max_km, fit_rmin_fwhm=1.5, min_annuli=4, half_width=0
         n_valid_px = (np.minimum(rho_max_px, 10.0) - core_px)
         feasible = n_valid_px >= min_annuli * 2 * half_width
         rows.append(dict(
-            target=t["target"].iloc[0] if "target" in t else Path(path).parent.name,
+            target=t["target"].iloc[0] if "target" in t else Path(path).stem,
             frames=len(t), delta_median=float(t["delta"].median()),
             km_per_pix_median=float(kpp.median()), fwhm_px_median=float(t["fwhm_pix"].median()),
             rho_max_px_median=float(rho_max_px.median()),
@@ -264,7 +263,7 @@ def main(argv=None):
     ap.add_argument("--target", default="24P")
     args = ap.parse_args(argv)
     target = zc.target_slug(args.target)
-    figdir = zc.fig_dir(target); resdir = zc.result_dir(target)
+    figdir = zc.fig_dir("profile"); resdir = zc.result_dir("profile")
 
     prof, summ = load(target)
     corr = hypothesis_tests(summ)
@@ -282,7 +281,7 @@ def main(argv=None):
         print(f"    {str(db):4s} " + "  ".join(f"{r:.1f}:{m:.2f}" for r, m in zip(s["r_pix"], s["median"])))
 
     refit = refit_methods(prof, summ, rho_max)
-    refit.to_csv(resdir / f"profile_resolution_{target}.csv", index=False)
+    refit.to_csv(zc.result_path("profile", "resolution.csv", target), index=False)
     g = refit[refit["clean"]]
     print("\n=== C/D/E. slope by method (clean frames, median [16-84%]) ===")
     for c in ("slope_naive", "slope_model", "slope_model_sky"):
@@ -311,13 +310,13 @@ def main(argv=None):
     print(f"  native - oversampled slope: median {d.median():+.3f}, 16-84% [{d.quantile(.16):+.2f}, {d.quantile(.84):+.2f}]")
 
     feas = survey_feasibility(rho_max)
-    feas.to_csv(zc.RESULT_ROOT / "profile_feasibility_survey.csv", index=False)
+    feas.to_csv(zc.result_path("profile", "feasibility.csv"), index=False)
     print(f"\n=== F. survey feasibility with rho_max = {rho_max:.0f} km ===")
     print(feas.sort_values("delta_median").to_string(index=False, float_format=lambda v: f"{v:.2f}"))
 
-    fig_hypothesis(summ, corr, figdir / f"profile_resolution_{target}.png")
-    fig_validity(by_km, by_px, rho_max, figdir / f"profile_validity_{target}.png")
-    fig_correction(refit, figdir / f"profile_correction_{target}.png")
+    fig_hypothesis(summ, corr, zc.fig_path("profile", "resolution.png", target))
+    fig_validity(by_km, by_px, rho_max, zc.fig_path("profile", "validity.png", target))
+    fig_correction(refit, zc.fig_path("profile", "correction.png", target))
     print("\nfigures written to", figdir)
     return 0
 

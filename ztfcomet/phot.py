@@ -837,7 +837,7 @@ def run_multi_aperture(target, datadir=None, phot_config=None, rho_km_set=None,
     table = table.reset_index(drop=True)
 
     if save:
-        outpath = d.result_dir(target.name) / f"photometry_{d.target_slug(target.name)}.csv"
+        outpath = d.photometry_path(target.name)
         table.to_csv(outpath, index=False)
         log.info("Wrote %s (%d rows, %d apertures)", outpath, len(table),
                  table["rho_km"].nunique())
@@ -885,7 +885,7 @@ def run_photometry(target, datadir=None, phot_config=None, progress=True, save=T
         log.info("%s: %d/%d frames flagged %s", target.name, n_flagged, len(table), counts)
 
     if save:
-        outpath = d.result_dir(target.name) / f"photometry_{d.target_slug(target.name)}.csv"
+        outpath = d.photometry_path(target.name)
         table.to_csv(outpath, index=False)
         log.info("Wrote %s", outpath)
     return table

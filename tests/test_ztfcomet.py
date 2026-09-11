@@ -518,3 +518,19 @@ def test_fetch_elements_passes_smallbody_id_type(monkeypatch):
     orbit._CACHE.clear()
     assert orbit.fetch_elements("2022 E2", epoch_jd=2460900.0, use_cache=False) is None
     assert seen.get("id_type") == "smallbody" and seen.get("id") == "2022 E2"
+
+
+def test_outputs_are_organised_by_subject_not_target():
+    from pathlib import Path
+    import pytest
+    with pytest.raises(ValueError):
+        directory.result_dir("24P", create=False)          # a target is not a subject
+    with pytest.raises(ValueError):
+        directory.fig_dir("survey", create=False)
+    p = directory.photometry_path("2019 Y3", create=False)
+    assert p.name == "2019Y3.csv" and p.parent.name == "photometry"
+    assert directory.result_path("profile", "summary.csv", "24P", create=False).name == "24P_summary.csv"
+    assert directory.fig_path("afrho", "rh.png", "24P", create=False) == directory.FIG_ROOT / "afrho" / "24P_rh.png"
+    assert directory.fig_dir("profile", "24P", create=False) == directory.FIG_ROOT / "profile" / "24P"
+    assert directory.result_path("afrho", "trends.csv", create=False).parent.name == "afrho"
+    assert set(directory.profile_paths("24P", create=False)) == {"profile", "summary", "stars"}

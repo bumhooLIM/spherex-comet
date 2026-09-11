@@ -176,7 +176,7 @@ def process(designation, args, root, prior=None):
                  started=datetime.now(timezone.utc).isoformat(timespec="seconds"))
 
     datadir = zc.data_dir(target.name)          # created even when empty
-    figdir = zc.fig_dir(target.name)
+    figdir = zc.fig_dir("afrho")
     entry["datadir"] = str(datadir)
 
     log.info("=" * 70)
@@ -271,7 +271,7 @@ def process(designation, args, root, prior=None):
         log.info("%s: %d rows over %d apertures, %d clean",
                  target.name, len(table), entry["n_apertures"], entry["n_clean"])
     elif "figures" in args.steps or "profile" in args.steps:
-        path = zc.result_dir(target.name, create=False) / f"photometry_{zc.target_slug(target.name)}.csv"
+        path = zc.photometry_path(target.name, create=False)
         if path.exists():
             table = pd.read_csv(path, dtype={"target": str})
 
@@ -355,7 +355,7 @@ def make_figures(target, table, figdir, elements=None):
     ax.set_title(f"{target.name}   " + r"$\rho$ = " + f"{rho_ref:.0f} km   (clean frames only)",
                  pad=34 if elements is not None else 12)
     ax.figure.tight_layout()
-    ax.figure.savefig(figdir / f"afrho_rh_{slug}.png", dpi=200)
+    ax.figure.savefig(zc.fig_path("afrho", "rh.png", target.name), dpi=200)
     plt.close(ax.figure)
 
     if table["rho_km"].nunique() > 1:
@@ -365,7 +365,7 @@ def make_figures(target, table, figdir, elements=None):
         ax.set_title(f"{target.name} — apertures ({band}, clean)",
                      pad=34 if elements is not None else 12)
         ax.figure.tight_layout()
-        ax.figure.savefig(figdir / f"afrho_apertures_{slug}.png", dpi=200)
+        ax.figure.savefig(zc.fig_path("afrho", "apertures.png", target.name), dpi=200)
         plt.close(ax.figure)
 
 

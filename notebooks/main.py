@@ -146,7 +146,7 @@ def build_target(name, args):
 def run_target(target, steps, args):
     """Run the requested stages for one target; return its photometry table."""
     datadir = zc.data_dir(target.name)
-    figdir = zc.fig_dir(target.name)
+    figdir = zc.fig_dir("photometry", target.name)
 
     print(f"\n{'=' * 72}\n{target.name}   {target.start_date} .. {target.end_date}"
           f"\n  designation : {target.query_designation}"
@@ -185,7 +185,7 @@ def run_target(target, steps, args):
             return None
         summarise(target, table)
     elif "figures" in steps or "profile" in steps:
-        path = zc.result_dir(target.name) / f"photometry_{zc.target_slug(target.name)}.csv"
+        path = zc.photometry_path(target.name)
         if path.exists():
             table = pd.read_csv(path, dtype={"target": str})
         else:
@@ -252,7 +252,7 @@ def make_lightcurve(target, table, figdir, only_good=False):
                        perihelion_jd={target.name: tp} if tp else None,
                        only_good=only_good)
     ax.set_title(f"{target.name}   " + r"$\rho$ = " + f"{target.phot.rho_km:.0f} km")
-    outpath = figdir / f"afrho_{zc.target_slug(target.name)}.png"
+    outpath = zc.fig_path("afrho", "lightcurve.png", target.name)
     ax.figure.savefig(outpath, dpi=200)
     plt.close(ax.figure)
     print(f"  lightcurve     : {outpath}")
@@ -282,7 +282,7 @@ def main(argv=None):
         import matplotlib.pyplot as plt
         ax = zc.plot_afrho(tables, filters=["ZTF_r"], x="rh", only_good=args.only_good)
         ax.set_title(r"$A(0\degree)f\rho$ — all targets (ZTF_r)")
-        outpath = zc.fig_dir(None) / "afrho_all_targets.png"
+        outpath = zc.fig_path("afrho", "all_targets.png")
         ax.figure.savefig(outpath, dpi=200)
         plt.close(ax.figure)
         print(f"\ncombined lightcurve: {outpath}")

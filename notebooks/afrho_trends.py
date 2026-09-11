@@ -9,14 +9,14 @@ perihelion and refit the rising and fading phases split at that peak rather
 than at perihelion.  Science lives in ``ztfcomet.activity``; this script is
 selection, bookkeeping and figures.  Reads only the local photometry tables;
 Horizons is queried once per comet for the perihelion time and the result is
-cached in ``results/activity/elements.csv``.
+cached in ``results/afrho/elements.csv``.
 
 Outputs
-  results/activity/afrho_trends.csv     one row per comet x band x aperture x leg
-  results/activity/afrho_peaks.csv      one row per comet x band x aperture (two-sided only)
-  results/activity/elements.csv         cached q, e, Tp_jd
-  fig/<target>/afrho_trend_<target>.png per-comet trends and peak
-  fig/survey/afrho_trends_overview.png  slope and peak distributions
+  results/afrho/trends.csv     one row per comet x band x aperture x leg
+  results/afrho/peaks.csv             one row per comet x band x aperture (two-sided only)
+  results/afrho/elements.csv         cached q, e, Tp_jd
+  fig/afrho/<target>_trend.png         per-comet trends and peak
+  fig/afrho/survey_overview.png         slope and peak distributions
 """
 
 from __future__ import annotations
@@ -42,7 +42,7 @@ from ztfcomet import orbit
 from ztfcomet import rcparams  # noqa: F401
 from survey import DEFAULT_LIST, read_designations
 
-OUT = zc.RESULT_ROOT / "activity"
+OUT = zc.result_dir("afrho")
 LEG_COLOUR = {"inbound": "tab:blue", "outbound": "tab:orange", "all": "0.4",
               "rising": "tab:green", "fading": "crimson"}
 
@@ -191,15 +191,15 @@ def main(argv=None):
     cpath = OUT / "elements.csv"
     cache = (pd.read_csv(cpath, dtype={"target": str}).set_index("target") if cpath.exists()
              else pd.DataFrame(columns=["record", "q", "e", "Tp_jd", "epoch_jd"]).rename_axis("target"))
-    files = sorted(glob.glob(str(zc.RESULT_ROOT / "*" / "photometry_*.csv")))
+    files = sorted(glob.glob(str(zc.result_dir("photometry") / "*.csv")))
     if args.targets:
         want = {zc.target_slug(t) for t in args.targets}
-        files = [f for f in files if Path(f).parent.name in want]
+        files = [f for f in files if Path(f).stem in want]
 
     names = designations()
     trends, peaks = [], []
     for f in files:
-        target = Path(f).parent.name
+        target = Path(f).stem
         phot = pd.read_csv(f, dtype={"target": str})
         if phot.empty:
             continue
@@ -214,14 +214,14 @@ def main(argv=None):
                   f"{p['band']}{p['rho_km'] // 1000:.0f}k:{p['t_peak']:+.0f}d{'' if p['bracketed'] else '(unbracketed)'}"
                   for _, p in pk.iterrows())), flush=True)
         if not args.no_figures and len(tr):
-            fig_target(target, phot, tr, pk, tp, zc.fig_dir(target) / f"afrho_trend_{target}.png")
+            fig_target(target, phot, tr, pk, tp, zc.fig_path("afrho", "trend.png", target))
     cache.to_csv(cpath)
     trends = pd.concat([t for t in trends if len(t)], ignore_index=True)
     peaks = pd.concat([p for p in peaks if len(p)], ignore_index=True) if any(len(p) for p in peaks) else pd.DataFrame()
-    trends.to_csv(OUT / "afrho_trends.csv", index=False)
-    peaks.to_csv(OUT / "afrho_peaks.csv", index=False)
+    trends.to_csv(OUT / "trends.csv", index=False)
+    peaks.to_csv(OUT / "peaks.csv", index=False)
     if not args.no_figures and len(peaks):
-        fig_overview(trends, peaks, zc.fig_dir("survey") / "afrho_trends_overview.png")
+        fig_overview(trends, peaks, zc.fig_path("afrho", "survey_overview.png"))
     print(f"\n{len(trends)} trend rows, {len(peaks)} peak rows -> {OUT}")
     return 0
 
