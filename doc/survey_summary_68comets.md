@@ -15,8 +15,9 @@ kept only where `PSF_FWHM < r_ap < 60″`.
 | frames on disk | **8,730** |
 | download completeness | **8,734 / 8,845 = 98.75%** |
 | corrupt files | **0** |
+| cutout PNGs (`fig/photometry/<T>/cutout/`) | 7,783 |
 | measurement rows | 41,533 |
-| clean rows | 52.1% |
+| clean rows | 51.2% (after the single-frame anomaly flag: 311 rows) |
 
 ### The 12 targets with no data
 
@@ -89,13 +90,13 @@ means a fifth of the raw measurements are unusable rather than merely noisy.
 
 ## Coma radial profiles
 
-All 56 targets: **7,698 frames, 4,145 clean.**
+All targets, profiles centred on the optocentre (`refine_centre`, 52% of clean frames moved): **7,735 frames, 4,092 clean.**
 
 | | |
 |---|---|
-| median comet slope | **−1.73** |
-| median field-star slope | **−4.39** |
-| comet shallower than stars | **3,964 / 4,145 = 95.6%** |
+| median comet slope | **−1.68** |
+| median field−star slope | **−4.39** |
+| comet shallower than stars | **96.5%** |
 
 The comae are unambiguously extended, and the ensemble slope brackets the −1
 expected for steady-state dust outflow.

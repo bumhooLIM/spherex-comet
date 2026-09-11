@@ -57,7 +57,42 @@ r-band is the main series and g is analysed separately; ρ = 10,000 and
 - **Colour**: same-night g/r pairs, excess over solar
   −2.5 log₁₀(Afρ_g / Afρ_r), with a two-level step as the change-point model.
 
-## Headline numbers (r-band, primary phases, grades A/B)
+## Reading the results
+
+The generated section below is rebuilt by `notebooks/afrho_trends_report.py`
+after every run of `afrho_trends.py`.  What it shows, in brief:
+
+- **Only four comets have both a rising and a fading phase with enough
+  points to fit** (24P, 2023 R1, 2025 K1, 2024 G4); only 24P has both at
+  grade B (r_h^−8.8 up, r_h^−4.0 down).  One-phase comets keep the earlier
+  picture: outbound-only fading is uniform (median x ≈ 3, 16–84% within
+  0.7–4.2), inbound-only indices scatter from −0.2 to 7.
+- **The survivors of the broken-law test are regime changes** — 10P flat
+  from 3.6 to 1.85 au then r_h^−10 (an onset); 2024 E1 an inbound maximum
+  at 3.4 au; 2023 R1 flat beyond 3.9 au then steep — plus curvature within
+  weeks of a peak (24P) and end-of-range features.  **3 au is not
+  special**: only four comets straddle it and they disagree in sense.
+- **Outbursts**: 217P's event at 3.10 au (×10, decaying over forty days)
+  and a handful of smaller ones; the 217P outbound index without them is
+  3.35 ± 0.09 (B).
+- **Colour**: the dust is +0.10 mag redder than the Sun with no r_h trend;
+  24P's change at 1.5 au doubles with aperture and is C₂ in g, not dust.
+- **Sparse targets**: re-querying at V < 21 added 0–3 clean points at
+  10,000 km, because the magnitude cut was never the limit: the distant
+  ones (29P, 2023 RS61, 2022 R6, 2023 F3) fail the 10,000 km scale test on
+  every frame and have 23–85 clean points at 20,000 km instead; the rest
+  have little ZTF coverage.
+- **Caveats**: a phase split at the peak can straddle perihelion; a 0.04 dex
+  r_h range (240P) gives grade D on both sides of a real split; the anomaly
+  rule cannot tell an artefact from a one-night brightening under sparse
+  sampling (29P's flagged rows are its outbursts one frame at a time).
+
+## Results (generated)
+
+## Results (generated)
+
+<!-- generated -->
+### Headline numbers (r-band, primary phases, grades A/B)
 
 | phase | 10,000 km: median x [16–84%] | 20,000 km |
 |---|---|---|
@@ -66,20 +101,16 @@ r-band is the main series and g is analysed separately; ρ = 10,000 and
 | inbound only | 5.14 [3.19, 7.43] (n = 6) | 4.70 [0.80, 5.76] (n = 8) |
 | outbound only | 3.18 [0.44, 4.22] (n = 11) | 2.64 [0.98, 3.77] (n = 12) |
 
-Of 14 two-sided comets, 8 have an interior
-maximum and are split there (6 of them bracketed on both
-sides).  11 primary legs at 10,000 km prefer a broken law and
-are divided: 10P, 145P, 2022E2, 2023A3, 2023R1, 2024E1, 2024J3, 2024L5, 2025A6, 2025K1, 2025M2, 2025Q3, 24P, 40P.  7 outburst windows on
-5 comets are excluded from the fits; 6
-comets have an isolated tail set aside.
+Survey clean rate 51.2% after the anomaly flag (311 rows).  Of 14 two-sided comets, 8 have an interior maximum and are split there (6 bracketed on both sides).  11 primary legs at 10,000 km prefer a broken law and are divided: 10P, 145P, 2022E2, 2023A3, 2023R1, 2024E1, 2024J3, 2024L5, 2025A6, 2025K1, 2025M2, 2025Q3, 24P, 40P.  7 outburst windows on 5 comets are excluded from the fits; 8 comets have an isolated tail set aside.  SPHEREx: 147 windows over 56 comets.
 
-## Activity peaks
+### Activity peaks
 
 | comet | ρ (km) | n rising / fading | peak T−T_p (d) | 16–84% | bracketed |
 |---|---|---|---|---|---|
 | 171P | 20k | 11 / 19 | **-22** | [-50, -15] | plateau on one side |
 | 2022N2 | 10k | 13 / 48 | **+9** | [-5, +17] | plateau on one side |
 | 2022N2 | 20k | 72 / 12 | **+168** | [+7, +169] | plateau on one side |
+| 2022R6 | 20k | 4 / 49 | **-67** | [-97, +54] | plateau on one side |
 | 2023R1 | 10k | 44 / 35 | **+17** | [+6, +23] | yes |
 | 2023R1 | 20k | 80 / 31 | **+19** | [+13, +26] | yes |
 | 2023V1 | 20k | 10 / 24 | **-56** | [-115, -55] | plateau on one side |
@@ -97,7 +128,7 @@ comets have an isolated tail set aside.
 | 47P | 10k | 38 / 17 | **-34** | [-35, -31] | yes |
 | 47P | 20k | 41 / 20 | **-17** | [-19, -14] | yes |
 
-## Where a single power law fails
+### Where a single power law fails
 
 | comet | ρ (km) | phase | r_h range | break (au) [16–84%] | x inside → outside | ΔBIC |
 |---|---|---|---|---|---|---|
@@ -127,12 +158,7 @@ comets have an isolated tail set aside.
 | 2024J3 | 20k | inbound | 4.41–6.03 | **5.74** [5.69, 5.76] | 0.3 ± 0.1 → 4.0 ± 0.7 | 8 |
 | 2025M2 | 20k | inbound | 5.51–8.17 | **6.08** [6.08, 6.15] | -0.2 ± 0.5 → 3.8 ± 0.2 | 25 |
 
-The survivors of the scaled test sort into regime changes (10P: flat from
-3.6 to 1.85 au, then r_h^−10 — an onset; 2024 E1: an inbound maximum at
-3.4 au; 2023 R1: flat beyond 3.9 au, then steep), curvature within weeks of
-a peak (24P), and end-of-range features.
-
-### The 3 au hypothesis
+#### The 3 au hypothesis
 
 | comet | ρ (km) | phase | x (< 3 au) | x (> 3 au) | split preferred |
 |---|---|---|---|---|---|
@@ -148,11 +174,7 @@ a peak (24P), and end-of-range features.
 | 78P | 10k | inbound | +2.74 ± 0.62 | +5.30 ± 0.57 | no (ΔBIC 1) |
 | 78P | 20k | inbound | +3.46 ± 0.91 | +5.35 ± 0.94 | no (ΔBIC -2) |
 
-Only four comets straddle 3 au.  The sense of the change differs between
-them, and where the free search finds a break it sits at 1.2–4.8 au.  The
-transition is comet-specific; 3 au is not special in this sample.
-
-## Outbursts
+### Outbursts
 
 | comet | ρ (km) | r_h at onset (au) | T−T_p (d) | rise (dex) | frames | decayed within coverage |
 |---|---|---|---|---|---|---|
@@ -166,15 +188,12 @@ transition is comet-specific; 3 au is not special in this sample.
 | 217P | 20k | 3.10 | +273 … +318 | +0.71 | 28 | no |
 | 235P | 10k | 1.98 | -3 … -0 | +1.25 | 3 | yes |
 | 235P | 20k | 1.98 | -7 … -0 | +1.17 | 4 | yes |
+| 29P | 20k | 6.27 | +2153 … +2172 | +0.43 | 5 | yes |
 | 29P | 20k | 6.31 | +2496 … +2527 | +1.61 | 12 | yes |
 | 40P | 10k | 1.95 | +70 … +93 | +1.01 | 16 | yes |
 | 40P | 20k | 1.95 | +70 … +93 | +0.85 | 15 | yes |
 
-217P's event at 3.10 au — a jump of ×10 that decays over forty days — is the
-one you pointed to; its two smaller events and the others are found by the
-same rule.  The 217P outbound index without them is 3.35 ± 0.09 (B).
-
-## Dust colour
+### Dust colour
 
 | comet | ρ (km) | pairs | r_h (au) | median excess (mag) | slope (mag/dex) | change at r_h | Δ colour |
 |---|---|---|---|---|---|---|---|
@@ -201,13 +220,9 @@ same rule.  The 217P outbound index without them is 3.35 ± 0.09 (B).
 | 40P | 10k | 20 | 1.95–2.83 | +0.202 | -0.27 ± 0.62 | none | — |
 | 40P | 20k | 10 | 1.95–2.76 | +0.165 | -2.17 ± 1.14 | none | — |
 
-One change survives, 24P at 1.5 au, and it doubles with aperture — C₂ in g,
-not dust.  The survey shows no dust colour that changes with r_h.
+### Per-comet indices, r-band, primary phases and segments
 
-## Per-comet indices, r-band, primary phases and segments
-
-Scaled error, (N), grade; A/B in bold.  Segments (`r_h<` / `r_h>`) are the
-divided trend where a break is preferred.
+Scaled error, (N), grade; A/B in bold.  Segments (`r_h<` / `r_h>`) are the divided trend where a break is preferred.
 
 | comet | r_h (au) | phase | 10,000 km | 20,000 km |
 |---|---|---|---|---|
@@ -233,9 +248,10 @@ divided trend where a break is preferred.
 | 2022E2 | 3.95–6.16 | outbound r_h>4.71 | — | **+2.91 ± 0.14 (47) B** |
 | 2022N2 | 3.83–4.25 | rising | +3.14 ± 9.77 (13) D | +0.19 ± 0.27 (72) D |
 | 2022N2 | 3.83–4.25 | fading | +0.17 ± 0.13 (48) D | +3.15 ± 1.47 (12) D |
-| 2022QE78 | 5.48–5.64 | fading | — | -4.01 ± 0.87 (80) D |
+| 2022QE78 | 5.48–5.64 | fading | — | -4.84 ± 0.77 (81) D |
 | 2022QE78 | 5.48–5.64 | outbound | -6.06 ± 6.65 (5) D | — |
-| 2022R6 | 6.58–6.74 | outbound | — | +1.74 ± 1.26 (49) D |
+| 2022R6 | 6.58–6.74 | rising | — | +325.20 ± 414.97 (4) D |
+| 2022R6 | 6.58–6.74 | fading | — | +1.74 ± 1.26 (49) D |
 | 2023A3 | 3.03–6.38 | outbound | **+2.75 ± 0.15 (26) A** | **+2.46 ± 0.12 (45) B** |
 | 2023A3 | 3.03–6.38 | outbound r_h<4.82 | **+2.30 ± 0.19 (21) A** | — |
 | 2023A3 | 3.03–6.38 | outbound r_h<5.68 | — | **+2.66 ± 0.09 (38) A** |
@@ -290,7 +306,7 @@ divided trend where a break is preferred.
 | 2025R1 | 1.98–2.41 | fading | -0.63 ± 0.71 (18) C | — |
 | 2025R1 | 1.98–2.41 | inbound | — | -0.11 ± 1.31 (9) C |
 | 2025R2 | 1.68–2.62 | outbound | **+2.75 ± 0.25 (16) B** | **+2.77 ± 0.18 (15) B** |
-| 2025W2 | 1.46–1.51 | inbound | -4.93 ± 11.18 (3) D | +6.95 ± 10.78 (3) D |
+| 2025W2 | 1.46–1.59 | inbound | -4.79 ± 10.72 (3) D | -21.69 ± 6.63 (4) D |
 | 210P | 0.61–2.19 | outbound | **+3.33 ± 0.04 (56) B** | **+3.07 ± 0.04 (44) B** |
 | 217P | 1.54–3.42 | outbound | **+3.35 ± 0.09 (87) B** | **+3.30 ± 0.18 (74) B** |
 | 235P | 1.98–2.48 | rising | +8.87 ± 5.54 (8) D | +10.07 ± 7.26 (11) D |
@@ -306,10 +322,10 @@ divided trend where a break is preferred.
 | 24P | 1.18–2.39 | fading r_h<1.47 | — | +5.44 ± 0.38 (11) C |
 | 24P | 1.18–2.39 | fading r_h>1.47 | — | **+3.28 ± 0.13 (42) B** |
 | 261P | 2.01–2.42 | inbound | +15.72 ± 0.55 (56) C | +16.35 ± 0.99 (30) D |
-| 29P | 6.27–6.31 | outbound | — | +37.77 ± 21.85 (57) D |
+| 29P | 6.27–6.31 | outbound | — | +13.90 ± 22.86 (54) D |
 | 2P | 4.02–4.09 | inbound | -5.92 ± 12.77 (25) D | -17.39 ± 27.15 (8) D |
 | 302P | 3.32–3.87 | outbound | +2.41 ± 0.61 (40) C | +1.58 ± 0.54 (44) C |
-| 306P | 1.29–1.48 | outbound | -0.15 ± 3.39 (5) D | — |
+| 306P | 1.29–1.48 | outbound | -0.24 ± 3.35 (5) D | — |
 | 40P | 1.83–2.87 | outbound | **+4.34 ± 0.14 (63) B** | **+4.13 ± 0.14 (55) B** |
 | 40P | 1.83–2.87 | outbound r_h<2.41 | **+5.50 ± 0.18 (42) B** | — |
 | 40P | 1.83–2.87 | outbound r_h<2.45 | — | **+5.12 ± 0.26 (42) B** |
@@ -322,20 +338,7 @@ divided trend where a break is preferred.
 | 48P | 2.37–3.15 | outbound | **+3.18 ± 0.29 (34) B** | **+2.52 ± 0.25 (34) B** |
 | 491P | 3.91–4.64 | outbound | -3.41 ± 0.72 (62) C | -4.07 ± 0.49 (69) C |
 | 493P | 3.82–4.26 | rising | +6.22 ± 1.35 (39) D | +6.14 ± 1.84 (60) D |
-| 499P | 0.93–1.47 | outbound | +2.88 ± 0.58 (4) D | — |
+| 499P | 1.33–1.76 | outbound | -1.88 ± 2.37 (6) D | — |
 | 63P | 2.45–2.76 | inbound | +6.72 ± 2.53 (10) D | +9.05 ± 3.13 (8) D |
 | 78P | 2.58–3.54 | inbound | **+4.08 ± 0.27 (50) B** | **+4.38 ± 0.40 (42) B** |
-
-## Caveats
-
-- A phase split at the peak can straddle perihelion; r_h is then not
-  monotonic in time within the phase.
-- Very narrow r_h ranges (240P: 0.04 dex on each side of its plateau peak)
-  give grade-D indices on both phases; the split is reported, the numbers
-  are not measurements.
-- The single-frame anomaly rule cannot tell an artefact from a real
-  one-night brightening when sampling is sparse: 29P's 27 flagged rows are
-  its outbursts seen one frame at a time.
-- The 12 targets with fewer than 10 clean points at 10,000 km are being
-  re-queried at V < 21 (the survey already used V < 20); their rows will
-  change when that finishes.
+<!-- /generated -->
