@@ -76,3 +76,75 @@ def test_select_points_drops_offcentre_and_counts_contamination():
     kept, counts = ac.select_points(d, "r", 10000)
     assert counts == dict(n_all=10, n_clean=10, n_contaminated=1, n_offcentre=2)
     assert len(kept) == 8 and (kept["leg"] == "inbound").all()
+
+
+def _broken_series(x1=2.0, x2=5.0, rb=3.0, n=60, err=0.03, seed=4, rh=(1.5, 6.0)):
+    rng = np.random.default_rng(seed)
+    lr = np.log10(rng.uniform(*rh, n)); xb = np.log10(rb)
+    y = 3.0 - x1 * (lr - xb) - (x2 - x1) * np.maximum(lr - xb, 0) + rng.normal(0, err, n)
+    return lr, y, np.full(n, err)
+
+
+def test_broken_powerlaw_finds_the_break_and_both_indices():
+    lr, y, e = _broken_series()
+    f = ac.fit_broken_powerlaw(lr, y, e)
+    assert f["testable"] and f["preferred"]
+    assert abs(f["r_break"] - 3.0) < 0.6 and f["r_break_lo"] <= f["r_break"] <= f["r_break_hi"]
+    assert abs(f["x_inner"] - 2.0) < 0.4 and abs(f["x_outer"] - 5.0) < 0.5
+
+
+def test_single_law_is_not_broken():
+    lr, y, e = _series(n=60)
+    f = ac.fit_broken_powerlaw(lr, y, e)
+    assert f["testable"] and not f["preferred"] and f["dbic"] < 6
+
+
+def test_fixed_break_at_3_au_gives_the_two_indices():
+    lr, y, e = _broken_series()
+    f = ac.fit_broken_powerlaw(lr, y, e, fixed_xb=np.log10(3.0), n_boot=0)
+    assert f["testable"] and abs(f["x_inner"] - 2.0) < 0.4 and abs(f["x_outer"] - 5.0) < 0.5
+
+
+def test_colour_pairs_and_change_point():
+    rng = np.random.default_rng(5)
+    n = 40
+    jd = 2.46e6 + np.sort(rng.uniform(0, 300, n)); rh = np.linspace(1.5, 5.0, n)
+    afr = 500 * rh ** -2.0
+    excess_true = np.where(rh < 3.0, 0.10, 0.35)                  # redder beyond 3 au
+    afg = afr * 10 ** (-0.4 * excess_true)
+    rows = []
+    for i in range(n):
+        for band, a in (("ZTF_r", afr[i]), ("ZTF_g", afg[i])):
+            rows.append(dict(obsjd=jd[i] + (0.01 if band == "ZTF_g" else 0.0), filter=band, rho_km=10000.0,
+                             quality_ok=True, afrho0_cm=a * (1 + rng.normal(0, 0.02)), afrho0_cm_err=0.02 * a,
+                             r=rh[i], r_rate=1.0, rho_pix=6.0, centroid_shift_pix=0.3, flag_contaminated=False,
+                             file=f"{band}_{i}", filter_mag=np.nan, filter_mag_err=np.nan))
+    phot = pd.DataFrame(rows)
+    pairs = ac.colour_pairs(phot, 10000)
+    assert len(pairs) == n and (pairs["dt_days"] < 0.02).all()
+    ct = ac.fit_colour_trend(pairs["log_rh"], pairs["excess"], pairs["excess_err"])
+    assert ct["change_preferred"] and abs(ct["r_change"] - 3.0) < 0.5
+    assert abs(ct["delta_colour"] - 0.25) < 0.05 and ct["delta_colour"] > 5 * ct["delta_colour_err"]
+
+
+def test_analyse_uses_the_peak_to_define_legs():
+    rng = np.random.default_rng(6)
+    n = 80
+    t = np.sort(rng.uniform(-150, 150, n)); tp = 2.46e6
+    rh = 1.2 + (t / 100.0) ** 2 * 0.8                              # symmetric orbit, q = 1.2 au
+    logafr = 2.5 - 0.5 * ((t - 30.0) / 70.0) ** 2                 # peak 30 d after perihelion
+    rows = [dict(obsjd=tp + t[i], filter="ZTF_r", rho_km=10000.0, quality_ok=True,
+                 afrho0_cm=10 ** logafr[i] * (1 + rng.normal(0, 0.03)), afrho0_cm_err=0.03 * 10 ** logafr[i],
+                 r=rh[i], r_rate=np.sign(t[i]) or 1.0, rho_pix=6.0, centroid_shift_pix=0.3,
+                 flag_contaminated=False, file=f"f{i}") for i in range(n)]
+    trends, peaks, breaks, colours = ac.analyse(pd.DataFrame(rows), "X", tp_jd=tp, bands=("r",), rhos=(10000,), n_boot=200)
+    assert peaks.iloc[0]["bracketed"] and abs(peaks.iloc[0]["t_peak"] - 30.0) < 12
+    prim = trends[trends["primary"]]
+    assert set(prim["leg"]) == {"rising", "fading"} and (prim["split"] == "peak").all()
+
+
+def test_understated_errors_do_not_manufacture_a_break():
+    lr, y, e = _series(n=60, err=0.15)
+    f = ac.fit_broken_powerlaw(lr, y, e / 10)                   # errors 10x too small
+    assert f["testable"] and not f["preferred"]
+    assert f["dbic"] < 6
