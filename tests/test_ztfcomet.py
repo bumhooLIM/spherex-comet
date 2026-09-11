@@ -499,3 +499,22 @@ def test_empty_input_survives_the_whole_chain():
     assert phot.calibrate(empty, cfg.PhotConfig()).empty
     assert phot.compute_afrho(empty, cfg.PhotConfig()).empty
     assert cutout.build_urls(empty).empty
+
+
+def test_fetch_elements_passes_smallbody_id_type(monkeypatch):
+    """Without id_type="smallbody" a comet designation resolves to nothing
+    (or, for "2P", to Pluto's moon Styx).  Pin the call."""
+    from ztfcomet import orbit
+    seen = {}
+
+    class FakeHorizons:
+        def __init__(self, **kw):
+            seen.update(kw)
+
+        def elements(self):
+            raise RuntimeError("stop here")
+
+    monkeypatch.setattr(orbit, "Horizons", FakeHorizons)
+    orbit._CACHE.clear()
+    assert orbit.fetch_elements("2022 E2", epoch_jd=2460900.0, use_cache=False) is None
+    assert seen.get("id_type") == "smallbody" and seen.get("id") == "2022 E2"

@@ -21,6 +21,8 @@ import logging
 import numpy as np
 from astroquery.jplhorizons import Horizons
 
+from .horizons import SMALLBODY
+
 __all__ = ["GAUSS_K", "fetch_elements", "time_from_perihelion",
            "rh_from_time", "PerihelionInfo"]
 
@@ -72,7 +74,9 @@ def fetch_elements(target_id, epoch_jd=None, use_cache=True):
         return _CACHE[key]
 
     try:
-        table = Horizons(id=target_id, location="@sun",
+        # id_type is mandatory for a comet: without it "2P" is Styx, and a
+        # designation such as "2022 E2" silently resolves to nothing.
+        table = Horizons(id=target_id, id_type=SMALLBODY, location="@sun",
                          epochs=[epoch_jd or 2451545.0]).elements()
         row = table[0]
         info = PerihelionInfo(
