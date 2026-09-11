@@ -95,6 +95,11 @@ def main():
     for name, (subject, new) in SURVEY_FIGS.items():
         move(zc.FIG_ROOT / "survey" / name, zc.fig_dir(subject) / new, moved)
         move(zc.FIG_ROOT / name, zc.fig_dir(subject) / new, moved)
+    # fig/afrho/<T>_<kind>.png -> fig/afrho/<kind>/<T>.png
+    for f in sorted(zc.fig_dir("afrho", create=False).glob("*_*.png")):
+        m = re.match(r"(?P<t>.+)_(?P<k>rh|apertures|trend|lightcurve|colour)\.png$", f.name)
+        if m:
+            move(f, zc.fig_kind_path("afrho", m.group("k"), m.group("t")), moved)
     # prune what is now empty
     pruned = 0
     for root in (zc.RESULT_ROOT, zc.FIG_ROOT):

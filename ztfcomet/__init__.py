@@ -40,8 +40,8 @@ from .config import (
 from .cutout import (build_urls, choose_cutout_size, construct_fitsurl,
                      download_urls, save_urls, verify_downloads)
 from .directory import (
-    DATA_ROOT, FIG_ROOT, GAIA_ROOT, PROJECT_ROOT, RESULT_ROOT, SUBJECTS,
-    fig_path, photometry_path, profile_paths, result_path,
+    DATA_ROOT, FIG_ROOT, GAIA_ROOT, PROJECT_ROOT, RESULT_ROOT, SPHEREX_ROOT, SUBJECTS,
+    fig_kind_path, fig_path, photometry_path, profile_paths, result_path,
     data_dir, fig_dir, result_dir, target_slug,
 )
 from .gaia import GaiaCatalog, effective_magnitude
@@ -73,8 +73,8 @@ __all__ = [
     # config
     "Target", "QueryConfig", "PhotConfig", "TARGETS", "get_target", "SOLAR_APPMAG_AB",
     # directory
-    "PROJECT_ROOT", "DATA_ROOT", "RESULT_ROOT", "FIG_ROOT", "GAIA_ROOT", "SUBJECTS",
-    "result_path", "fig_path", "photometry_path", "profile_paths",
+    "PROJECT_ROOT", "DATA_ROOT", "RESULT_ROOT", "FIG_ROOT", "GAIA_ROOT", "SPHEREX_ROOT", "SUBJECTS",
+    "result_path", "fig_path", "fig_kind_path", "photometry_path", "profile_paths",
     "data_dir", "result_dir", "fig_dir", "target_slug",
     # query
     "search_frames", "query_sso_ephemeris", "query_ztf_metadata", "extract_lastrecnum",

@@ -252,7 +252,7 @@ def make_lightcurve(target, table, figdir, only_good=False):
                        perihelion_jd={target.name: tp} if tp else None,
                        only_good=only_good)
     ax.set_title(f"{target.name}   " + r"$\rho$ = " + f"{target.phot.rho_km:.0f} km")
-    outpath = zc.fig_path("afrho", "lightcurve.png", target.name)
+    outpath = zc.fig_kind_path("afrho", "lightcurve", target.name)
     ax.figure.savefig(outpath, dpi=200)
     plt.close(ax.figure)
     print(f"  lightcurve     : {outpath}")

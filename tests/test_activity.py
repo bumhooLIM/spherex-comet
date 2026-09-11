@@ -137,10 +137,11 @@ def test_analyse_uses_the_peak_to_define_legs():
                  afrho0_cm=10 ** logafr[i] * (1 + rng.normal(0, 0.03)), afrho0_cm_err=0.03 * 10 ** logafr[i],
                  r=rh[i], r_rate=np.sign(t[i]) or 1.0, rho_pix=6.0, centroid_shift_pix=0.3,
                  flag_contaminated=False, file=f"f{i}") for i in range(n)]
-    trends, peaks, breaks, colours = ac.analyse(pd.DataFrame(rows), "X", tp_jd=tp, bands=("r",), rhos=(10000,), n_boot=200)
+    trends, peaks, breaks, colours, outbursts = ac.analyse(pd.DataFrame(rows), "X", tp_jd=tp, bands=("r",), rhos=(10000,), n_boot=200)
     assert peaks.iloc[0]["bracketed"] and abs(peaks.iloc[0]["t_peak"] - 30.0) < 12
     prim = trends[trends["primary"]]
-    assert set(prim["leg"]) == {"rising", "fading"} and (prim["split"] == "peak").all()
+    assert set(prim[prim["split"] == "peak"]["leg"]) == {"rising", "fading"}
+    assert set(prim["split"]) <= {"peak", "segment"}          # segments of a preferred break are primary too
 
 
 def test_understated_errors_do_not_manufacture_a_break():
@@ -148,3 +149,52 @@ def test_understated_errors_do_not_manufacture_a_break():
     f = ac.fit_broken_powerlaw(lr, y, e / 10)                   # errors 10x too small
     assert f["testable"] and not f["preferred"]
     assert f["dbic"] < 6
+
+
+def test_sparse_tail_marks_a_small_isolated_group():
+    x = np.log10(np.r_[np.linspace(1.4, 2.6, 56), [3.58, 3.60, 3.62, 3.63]])   # 10P-like
+    tail = ac.sparse_tail(x)
+    assert tail.sum() == 4 and tail[-4:].all()
+    assert ac.sparse_tail(np.log10(np.linspace(1.4, 3.6, 60))).sum() == 0    # no gap, no tail
+
+
+def test_outburst_is_detected_and_windowed():
+    rng = np.random.default_rng(7)
+    t = np.arange(0, 120, 2.0); y = 1.5 - 0.002 * t + rng.normal(0, 0.03, len(t))
+    on = 30                                                    # jump x5 at t=60, decay over ~40 d
+    y[on:] += 0.7 * np.exp(-(t[on:] - t[on]) / 20.0)
+    win, order = ac.detect_outbursts(t, y)
+    assert len(win) == 1 and abs(win[0]["t_start"] - 60.0) < 2.1 and win[0]["ended"]
+    mask, _ = ac.outburst_mask(t, y)
+    assert mask[on] and not mask[on - 1] and 10 < mask.sum() < 40
+    assert ac.detect_outbursts(t, 1.5 - 0.002 * t + rng.normal(0, 0.03, len(t)))[0] == []
+    # a steep but smooth rise (0.5 dex over 100 d) is a trend, not an outburst
+    tt = np.linspace(-150, 30, 60); smooth = 2.5 - 0.5 * ((tt - 30.0) / 70.0) ** 2 + rng.normal(0, 0.02, 60)
+    assert ac.detect_outbursts(tt, smooth)[0] == []
+    # a jump that keeps rising is an onset, not an outburst
+    onset = np.r_[1.5 + rng.normal(0, 0.02, 20), 2.1 + 0.01 * np.arange(20) + rng.normal(0, 0.02, 20)]
+    assert ac.detect_outbursts(np.arange(40) * 2.0, onset)[0] == []
+
+
+def test_smooth_trend_follows_the_data_and_stops_with_it():
+    lr, y, e = _series(n=80)
+    g, s = ac.smooth_trend(lr, y, e)
+    assert len(g) > 50 and np.all(np.isfinite(s))
+    assert g.min() >= lr.min() - 1e-9 and g.max() <= lr.max() + 1e-9
+    assert abs(np.polyfit(g, s, 1)[0] + 2.5) < 0.3                 # tracks the underlying slope
+
+
+def test_plateau_peak_still_splits_the_phases():
+    rng = np.random.default_rng(8); n = 70
+    t = np.sort(rng.uniform(-150, 150, n)); tp = 2.46e6
+    rh = 1.2 + (t / 100.0) ** 2 * 0.8
+    # a plateau tilted 0.03 dex toward the peak (a truly flat one has no defined maximum), then fading
+    logafr = np.where(t < -20, 2.47 + 0.03 * (t + 150) / 130.0, 2.5 - 0.6 * ((t + 20) / 120.0)) + rng.normal(0, 0.02, n)
+    rows = [dict(obsjd=tp + t[i], filter="ZTF_r", rho_km=10000.0, quality_ok=True,
+                 afrho0_cm=10 ** logafr[i], afrho0_cm_err=0.02 * 10 ** logafr[i], r=rh[i],
+                 r_rate=np.sign(t[i]) or 1.0, rho_pix=6.0, centroid_shift_pix=0.3,
+                 flag_contaminated=False, file=f"f{i}") for i in range(n)]
+    trends, peaks, *_ = ac.analyse(pd.DataFrame(rows), "P", tp_jd=tp, bands=("r",), rhos=(10000,), n_boot=200)
+    pk = peaks.iloc[0]
+    assert pk["interior"] and not pk["bracketed"]
+    assert set(trends[trends["primary"] & (trends["split"] == "peak")]["leg"]) == {"rising", "fading"}

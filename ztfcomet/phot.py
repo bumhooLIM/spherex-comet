@@ -65,7 +65,7 @@ __all__ = [
     "build_frame_table", "attach_ephemerides", "measure_photometry",
     "calibrate", "compute_afrho", "run_photometry", "flag_contamination",
     "aperture_scale_ok", "run_multi_aperture",
-    "FLAG_COLUMNS", "CRITICAL_FLAGS", "ADVISORY_FLAGS",
+    "FLAG_COLUMNS", "CRITICAL_FLAGS", "ADVISORY_FLAGS", "flag_anomalies", "finalize_flags",
 ]
 
 log = logging.getLogger(__name__)
@@ -85,6 +85,7 @@ CRITICAL_FLAGS = [
     "flag_negative_flux",  # background-subtracted sum <= 0 (mag undefined)
     "flag_lowsnr",         # SNR < 3
     "flag_contaminated",   # catalogued background source(s) inside the aperture
+    "flag_anomalous_bright",  # one frame far above its neighbours in time, alone
 ]
 
 #: Flags that qualify a measurement without invalidating it.  Both add a small
@@ -757,10 +758,80 @@ def compute_afrho(table, phot_config=None):
     phase_frac = 0.4 * np.log(10) * pc.phase_beta_err * alpha
     out["afrho0_cm_err"] = np.abs(out["afrho0_cm"]) * np.sqrt(frac_err ** 2 + phase_frac ** 2)
 
-    out["quality_ok"] = ~out[CRITICAL_FLAGS].any(axis=1)
-    out["flags"] = out[FLAG_COLUMNS].apply(
+    return finalize_flags(out)
+
+
+def finalize_flags(table):
+    """Recompute ``quality_ok`` and the ``flags`` string from the flag columns.
+
+    Any flag column that is absent is taken as False, so a table written
+    before a flag existed can be re-finalised after the flag is added.
+    """
+    for c in FLAG_COLUMNS:
+        if c not in table:
+            table[c] = False
+    table["quality_ok"] = ~table[CRITICAL_FLAGS].any(axis=1)
+    table["flags"] = table[FLAG_COLUMNS].apply(
         lambda r: ",".join(c.replace("flag_", "") for c in FLAG_COLUMNS if r[c]), axis=1)
-    return out
+    return table
+
+
+def flag_anomalies(table, phot_config=None):
+    """Flag single frames that stand far above their neighbours in time.
+
+    A background source the Gaia test missed (fainter than G = 18.5, or a
+    galaxy), a cosmic ray or a satellite trail inside the aperture makes one
+    frame far brighter than the frames around it, with nothing similar
+    nearby: 2022 E2 carries a frame 50% above its neighbours of the same
+    night, 0.18 dex against a series that scatters by 0.008.  A real
+    brightening -- an outburst -- persists over several frames and decays;
+    that is not flagged here, it is analysed in :mod:`ztfcomet.activity`.
+
+    Per filter and aperture, each otherwise-clean frame is compared with
+    the median of its nearest clean neighbours in time (up to
+    ``anomaly_neighbours`` on each side within ``anomaly_window_days``).  It
+    is flagged when its excess over that median exceeds both
+    ``anomaly_min_dex`` and ``anomaly_sigma`` times the robust scatter of
+    all such excesses in the series, and neither adjacent clean frame
+    carries more than half the excess.  The test is one-sided: a frame far
+    *below* its neighbours is a real faintness, or already flagged.
+    """
+    pc = phot_config or cfg.PhotConfig()
+    out = table.copy()
+    out["flag_anomalous_bright"] = False
+    if out.empty or "afrho_cm" not in out or "obsjd" not in out:
+        return finalize_flags(out)
+    others = [c for c in CRITICAL_FLAGS if c != "flag_anomalous_bright" and c in out]
+    for _, idx in out.groupby(["filter", "rho_km"]).groups.items():
+        sub = out.loc[idx]
+        base = ~sub[others].any(axis=1) & (sub["afrho_cm"] > 0) & np.isfinite(sub["afrho_cm"])
+        s = sub[base].sort_values("obsjd")
+        n = len(s)
+        if n < 5:
+            continue
+        t = s["obsjd"].to_numpy(float)
+        y = np.log10(s["afrho_cm"].to_numpy(float))
+        excess = np.full(n, np.nan)
+        for i in range(n):
+            left = [j for j in range(i - 1, -1, -1) if t[i] - t[j] <= pc.anomaly_window_days][:pc.anomaly_neighbours]
+            right = [j for j in range(i + 1, n) if t[j] - t[i] <= pc.anomaly_window_days][:pc.anomaly_neighbours]
+            nb = left + right
+            if len(nb) >= 3:
+                excess[i] = y[i] - np.median(y[nb])
+        ok = np.isfinite(excess)
+        if ok.sum() < 5:
+            continue
+        sigma = max(1.4826 * float(np.median(np.abs(excess[ok] - np.median(excess[ok])))), 0.02)
+        flag = np.zeros(n, bool)
+        for i in np.where(ok)[0]:
+            if excess[i] < pc.anomaly_min_dex or excess[i] < pc.anomaly_sigma * sigma:
+                continue
+            adjacent = [j for j in (i - 1, i + 1) if 0 <= j < n and np.isfinite(excess[j])]
+            if any(excess[j] > 0.5 * excess[i] for j in adjacent):
+                continue                                    # a neighbour shares it: not single
+            flag[i] = True
+        out.loc[s.index[flag], "flag_anomalous_bright"] = True
+    return finalize_flags(out)
 
 
 def run_multi_aperture(target, datadir=None, phot_config=None, rho_km_set=None,
@@ -835,6 +906,11 @@ def run_multi_aperture(target, datadir=None, phot_config=None, rho_km_set=None,
 
     table = pd.concat(parts, ignore_index=True).sort_values(["rho_km", "obsjd"])
     table = table.reset_index(drop=True)
+    # Needs the whole series, so it runs once all apertures are assembled.
+    table = flag_anomalies(table, phot_config)
+    n_anom = int(table["flag_anomalous_bright"].sum())
+    if n_anom:
+        log.info("%s: %d single-frame anomalies flagged", target.name, n_anom)
 
     if save:
         outpath = d.photometry_path(target.name)

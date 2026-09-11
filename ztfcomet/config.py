@@ -184,6 +184,13 @@ class PhotConfig:
     max_centroid_shift_fwhm : float
         Flag frames where the refined centroid moved further than this many FWHM
         from the ephemeris position — usually a field star capturing the centroid.
+    anomaly_window_days, anomaly_neighbours, anomaly_min_dex, anomaly_sigma
+        The single-frame anomaly test (:func:`ztfcomet.phot.flag_anomalies`):
+        a frame is compared with up to *anomaly_neighbours* otherwise-clean
+        frames on each side within *anomaly_window_days*, and flagged when it
+        exceeds their median by more than *anomaly_min_dex* and more than
+        *anomaly_sigma* times the robust scatter of such excesses, with
+        neither adjacent frame sharing half the excess.
     """
 
     rho_km: float = 15_000.0
@@ -203,6 +210,10 @@ class PhotConfig:
     sigma_clip_iters: int = 5
     winpos_sig_scale: float = 3.0
     max_centroid_shift_fwhm: float = 3.0
+    anomaly_window_days: float = 30.0
+    anomaly_neighbours: int = 3
+    anomaly_min_dex: float = 0.15
+    anomaly_sigma: float = 5.0
     apply_color_term: bool = True
     apply_aperture_correction: bool = True
 

@@ -534,3 +534,40 @@ def test_outputs_are_organised_by_subject_not_target():
     assert directory.fig_dir("profile", "24P", create=False) == directory.FIG_ROOT / "profile" / "24P"
     assert directory.result_path("afrho", "trends.csv", create=False).parent.name == "afrho"
     assert set(directory.profile_paths("24P", create=False)) == {"profile", "summary", "stars"}
+
+
+def test_fig_kind_path_puts_one_figure_type_per_directory():
+    assert directory.fig_kind_path("afrho", "rh", "24P", create=False) == directory.FIG_ROOT / "afrho" / "rh" / "24P.png"
+    assert directory.fig_dir("afrho", "24P", create=False, kind="trend") == directory.FIG_ROOT / "afrho" / "trend" / "24P"
+
+
+def _series_table(afrho, jd0=2.46e6):
+    import pandas as pd
+    from ztfcomet import phot
+    n = len(afrho)
+    t = pd.DataFrame(dict(obsjd=jd0 + np.arange(n) * 1.0, filter="ZTF_r", rho_km=10000.0,
+                          afrho_cm=np.asarray(afrho, float)))
+    for c in phot.CRITICAL_FLAGS + phot.ADVISORY_FLAGS:
+        if c != "flag_anomalous_bright":
+            t[c] = False
+    return t
+
+
+def test_single_bright_frame_is_flagged_but_a_two_frame_excursion_is_not():
+    from ztfcomet import phot
+    base = 100.0 + np.random.default_rng(0).normal(0, 1.0, 14)
+    one = base.copy(); one[6] = 160.0                       # +0.20 dex, alone
+    t = phot.flag_anomalies(_series_table(one))
+    assert t["flag_anomalous_bright"].sum() == 1 and t["flag_anomalous_bright"][6]
+    assert not t["quality_ok"][6] and "anomalous_bright" in t["flags"][6]
+    two = base.copy(); two[6] = 160.0; two[7] = 150.0        # two frames share it
+    t = phot.flag_anomalies(_series_table(two))
+    assert t["flag_anomalous_bright"].sum() == 0
+
+
+def test_anomaly_needs_both_a_floor_and_a_sigma_excess():
+    from ztfcomet import phot
+    noisy = 100.0 * 10 ** np.random.default_rng(1).normal(0, 0.08, 20)   # 0.08 dex scatter
+    noisy[9] = 100.0 * 10 ** 0.18                           # +0.18 dex is only ~2 sigma here
+    t = phot.flag_anomalies(_series_table(noisy))
+    assert t["flag_anomalous_bright"].sum() == 0

@@ -1,46 +1,46 @@
 # Handoff
 
 ## Current State
-Three threads.  The survey is complete and reduced (PR #2, #4 merged).
+Branch `feat/afrho-peak-fits-and-reorg` (merges the unmerged PR #5 and the
+activity branch; rebases to nothing once they land).  163 tests.
 
-1. **Heliocentric Afρ trends** — on `feat/afrho-peak-fits-and-reorg`
-   (which merges the unmerged `analysis/afrho-heliocentric-trends` and
-   `fix/profile-peak-centring`; rebases to nothing once both PRs land).
-   Phases split at the *activity peak*, not perihelion; broken power law
-   with a free break and a fixed 3 au split (ΔBIC on scaled errors — raw
-   χ² called 17/22 legs broken, scaled 13); g−r colour as the excess over
-   solar with a step change point.  `doc/afrho_heliocentric_trends.md`.
-   Results: only 4 comets have both phases fittable; outbound-only comets
-   fade uniformly (x ≈ 2.9), inbound-only scatter −0.2…6.9.  Breaks: 10P
-   onset at 1.85 au, 2024E1 maximum at 3.4 au inbound; the 3 au hypothesis
-   is comet-specific, not universal (4 comets, opposite senses).  Colour:
-   +0.10 mag redder than solar, no r_h trend; 24P bluer inside 1.5 au by an
-   amount that doubles with aperture — C₂ in g, not dust.
-   **Outputs are now organised by subject**: results/{photometry,profile,
-   afrho}/, fig/{photometry,profile,afrho}/; `result_dir`/`fig_dir` take a
-   subject and reject target names; `notebooks/reorganize_outputs.py`
-   migrated 8,277 files.  `figure.ipynb` still writes the old per-target
-   figure names and needs updating to `fig_path()`.
-2. **Profile centring fix** — PR #5 open.  Code complete (141 tests); the
-   profile re-run is 22/68 because the T7 dropped out.  46 targets still
-   have pre-fix profiles; the 46-target list and resume command are in the
-   PR.  Survey-wide profile numbers in the docs are pre-fix until then.
-3. **Aperture off-centre follow-up** (not started): `flag_centroid` is a
-   3-FWHM star-capture rule; at ρ = 10k, 5.3% of clean rows have the centre
-   > 0.5 r_ap off the nucleus.  The trend analysis drops those rows itself.
+**Afρ trend analysis** (`doc/afrho_heliocentric_trends.md`): phases split at
+the *activity peak* (interior maximum, plateau allowed); outbursts detected
+(jump above the extrapolated trend, confirmed, must decay) and excluded;
+isolated r_h tails set aside; segments where a broken law is preferred;
+smoothed black guide curve; SPHEREx phase windows shaded; grade-D fits not
+drawn.  `flag_anomalous_bright` is a new CRITICAL photometry flag (single
+frame > 0.15 dex and 5σ above its time-neighbours, alone); 309 rows.
+**C/2024 E1's Afρ reversal is real** and the large-aperture decline is the
+artefact: the 30–40k apertures are sky-dominated (80% of clean 40k rows have
+sky/flux > 10) — `doc/afrho_aperture_systematics.md`.
+
+**Outputs by kind**: fig/afrho/{rh,apertures,trend,lightcurve,colour}/<T>.png
+via `fig_kind_path`; `reorganize_outputs.py` migrated them.
+
+**A chained job is running** (`<scratch>/chain.sh`, status in
+`<scratch>/chain_status`): (1) profile+figures for all 68 (the recentring
+fix, PR #5) → (2) re-query of the 12 sparse targets at **V < 21** (the survey
+was already V < 20; the request said 20) → (3) cutout PNGs for every frame
+(`survey.py --steps cutouts`, fig/photometry/<T>/cutout/).  ~5 h.
 
 ## Next Steps
-1. Merge PR #5 and the activity branch, then PR `feat/afrho-peak-fits-and-reorg`.
-2. Mount the T7 → finish the profile re-run (PR #5), refit 1/ρ, update docs.
-3. Decide the aperture-centring fix: `refine_centre` in phot, or a flag.
+1. When the chain ends: rerun `afrho_trends.py` (sparse targets changed),
+   refresh the numbers in the trends note, commit; then push and PR.
+2. Merge PR #5 and the activity branch first so this PR shows its own diff.
+3. Add an advisory `sky_dominated` flag (sky/flux > 10, table-only) and show
+   it on the aperture figures — recommended in the systematics note.
+4. `figure.ipynb` still writes the old per-target figure names.
 
 ## Blind Spots / Dead Ends
-- `fetch_elements` returns None on failure rather than raising; log it.
-  Resolve comets from the survey-list *designation* ("2022 E2"), never the
-  results-directory slug ("2022E2") — Horizons cannot match the latter.
-- A power law in r_h needs a lever arm: σ_x ∝ 1/(√N σ_log r_h).  Several
-  comets span < 0.02 dex; grade on the baseline before N.
-- Scaled errors, not formal: A/B fits have median χ²_red ≫ 1.
-- A sigma cut cannot guard a max-minus-sample statistic (17.5% false
-  positives at 3σ); use the null quantile through the same code path.
-- Gate on log lines, not file mtimes; `tail -1` after pytest hides its exit.
+- An outburst test against the recent *median* opens on any steep smooth
+  rise and never closes; compare with the extrapolated trend, and require
+  the window to decay (a jump that keeps rising is an onset: 261P).
+- BIC on raw χ² calls every kink decisive when scatter ≫ errors; inflate
+  the errors to χ²_red = 1 on the simpler model first.
+- A kinked line cannot represent a colour *step*; use two levels.
+- `df.flags` is a pandas attribute — use `df["flags"]`.
+- `--targets` in survey.py takes designations with spaces ("2022 QE78");
+  the results-file slug fails at Horizons.
+- The T7 drops off the bus under sustained reads; `survey.py` refuses a
+  pinned-but-missing root, and the chain records each stage's exit code.

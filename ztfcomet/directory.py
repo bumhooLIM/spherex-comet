@@ -48,6 +48,9 @@ SSD_DATA_ROOT = Path("/Volumes/T7/data/ztf-comet")
 #: flagging.  Override with ``$ZTFCOMET_GAIA``.  Holds ``gaiadr3_all.npy`` and,
 #: ideally, the ``gaiadr3_deccache/`` fast path.
 DEFAULT_GAIA_ROOT = Path.home() / "Desktop" / "data" / "gaia_dr3"
+#: The SPHEREx comet catalog project, whose ``data/apphot`` photometry and
+#: ``data/phase_assignment.csv`` say when SPHEREx observed each comet.
+DEFAULT_SPHEREX_ROOT = Path.home() / "Desktop" / "claude" / "spherex-comet-catalog"
 
 _MARKER = "pyproject.toml"
 
@@ -102,6 +105,7 @@ def _resolve_data_root() -> Path:
 DATA_ROOT: Path = _resolve_data_root()
 
 #: Photometry tables and other clean, small outputs.  Never committed.
+SPHEREX_ROOT: Path = Path(os.environ.get("ZTFCOMET_SPHEREX", DEFAULT_SPHEREX_ROOT)).expanduser()
 RESULT_ROOT: Path = PROJECT_ROOT / "results"
 
 #: Figures.  Never committed.
@@ -165,9 +169,25 @@ def result_dir(subject: str, create: bool = True) -> Path:
     return _sub(RESULT_ROOT / _subject(subject), None, create)
 
 
-def fig_dir(subject: str, targetname: str | None = None, create: bool = True) -> Path:
-    """``fig/<subject>/``, or ``fig/<subject>/<target>/`` for bulk per-frame images."""
-    return _sub(FIG_ROOT / _subject(subject), targetname, create)
+def fig_dir(subject: str, targetname: str | None = None, create: bool = True,
+            kind: str | None = None) -> Path:
+    """``fig/<subject>/``, ``fig/<subject>/<kind>/``, or with a target the
+    per-target directory under either, for bulk per-frame images."""
+    root = FIG_ROOT / _subject(subject)
+    if kind:
+        root = root / kind
+    return _sub(root, targetname, create)
+
+
+def fig_kind_path(subject: str, kind: str, targetname: str, ext: str = "png",
+                  create: bool = True) -> Path:
+    """``fig/<subject>/<kind>/<target>.<ext>`` -- one figure type per directory.
+
+    The per-target figures of a subject are kept apart by *kind* (for afrho:
+    ``rh``, ``apertures``, ``trend``, ``lightcurve``, ``colour``) so that
+    scrolling one directory shows one figure type across all comets.
+    """
+    return fig_dir(subject, None, create, kind=kind) / f"{target_slug(targetname)}.{ext}"
 
 
 def result_path(subject: str, filename: str, targetname: str | None = None,

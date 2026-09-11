@@ -71,7 +71,7 @@ log = logging.getLogger("ztfcomet.survey")
 # not set one, so a dead peer costs minutes instead of the rest of the night.
 socket.setdefaulttimeout(300)
 
-STEPS = ("query", "download", "phot", "profile", "figures")
+STEPS = ("query", "download", "phot", "profile", "figures", "cutouts")
 DEFAULT_LIST = "doc/sx_comet_list_ver2607.xlsx"
 
 
@@ -270,7 +270,7 @@ def process(designation, args, root, prior=None):
                 entry[flag] = int(table[flag].sum())
         log.info("%s: %d rows over %d apertures, %d clean",
                  target.name, len(table), entry["n_apertures"], entry["n_clean"])
-    elif "figures" in args.steps or "profile" in args.steps:
+    elif any(k in args.steps for k in ("figures", "profile", "cutouts")):
         path = zc.photometry_path(target.name, create=False)
         if path.exists():
             table = pd.read_csv(path, dtype={"target": str})
@@ -304,6 +304,15 @@ def process(designation, args, root, prior=None):
             entry["profile"] = f"failed: {exc}"
 
     # -------------------------------------------------------------- figures
+    if "cutouts" in args.steps and table is not None and not table.empty:
+        # One PNG per frame, drawn with the smallest aperture that passed the
+        # scale test on that target; the annotated cutouts live with the
+        # photometry, under fig/photometry/<target>/cutout/.
+        ref = table[np.isclose(table["rho_km"], table["rho_km"].min())]
+        written = zc.save_all_cutouts(ref, datadir, zc.fig_dir("photometry", target.name) / "cutout",
+                                      target=target, dpi=50, progress=False)
+        entry["n_cutout_figures"] = len(written)
+        log.info("%s: %d cutout figures", target.name, len(written))
     if "figures" in args.steps and table is not None and not table.empty:
         try:
             make_figures(target, table, figdir, elements=elements)
@@ -355,7 +364,7 @@ def make_figures(target, table, figdir, elements=None):
     ax.set_title(f"{target.name}   " + r"$\rho$ = " + f"{rho_ref:.0f} km   (clean frames only)",
                  pad=34 if elements is not None else 12)
     ax.figure.tight_layout()
-    ax.figure.savefig(zc.fig_path("afrho", "rh.png", target.name), dpi=200)
+    ax.figure.savefig(zc.fig_kind_path("afrho", "rh", target.name), dpi=200)
     plt.close(ax.figure)
 
     if table["rho_km"].nunique() > 1:
@@ -365,7 +374,7 @@ def make_figures(target, table, figdir, elements=None):
         ax.set_title(f"{target.name} — apertures ({band}, clean)",
                      pad=34 if elements is not None else 12)
         ax.figure.tight_layout()
-        ax.figure.savefig(zc.fig_path("afrho", "apertures.png", target.name), dpi=200)
+        ax.figure.savefig(zc.fig_kind_path("afrho", "apertures", target.name), dpi=200)
         plt.close(ax.figure)
 
 

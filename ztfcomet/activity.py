@@ -147,8 +147,9 @@ def find_peak(t_days, log_afrho, log_err, kernel_days=None, n_boot=500, seed=0,
     keep = np.isfinite(t) & np.isfinite(y) & np.isfinite(e) & (e > 0)
     t, y, e = t[keep], y[keep], e[keep]
     n = int(keep.sum())
-    out = dict(t_peak=np.nan, t_lo=np.nan, t_hi=np.nan, bracketed=False, kernel_days=np.nan,
-               n=n, peak_log_afrho=np.nan, rms_dex=np.nan, drop_lo=np.nan, drop_hi=np.nan)
+    out = dict(t_peak=np.nan, t_lo=np.nan, t_hi=np.nan, bracketed=False, interior=False,
+               kernel_days=np.nan, n=n, peak_log_afrho=np.nan, rms_dex=np.nan, drop_lo=np.nan,
+               drop_hi=np.nan)
     if n < 6 or np.ptp(t) <= 0:
         return out
     order = np.argsort(t)
@@ -166,8 +167,12 @@ def find_peak(t_days, log_afrho, log_err, kernel_days=None, n_boot=500, seed=0,
     i = int(np.argmax(s))
     rms = float(np.std(y - np.interp(t, grid, s)))
     span = float(np.ptp(t))
-    interior = (t.min() + edge_frac * span) < grid[i] < (t.max() - edge_frac * span)
+    interior = bool((t.min() + edge_frac * span) < grid[i] < (t.max() - edge_frac * span))
     drop_lo, drop_hi = float(s[i] - s[0]), float(s[i] - s[-1])
+    # bracketed: the curve falls on both sides.  interior: the maximum is not
+    # at the edge of the coverage.  A maximum on a plateau (240P: flat before,
+    # fading after) is interior but not bracketed, and still the right place
+    # to split the phases.
     bracketed = bool(interior and drop_lo > min_drop_sigma * rms and drop_hi > min_drop_sigma * rms)
     rng = np.random.default_rng(seed)
     peaks = []
@@ -178,7 +183,8 @@ def find_peak(t_days, log_afrho, log_err, kernel_days=None, n_boot=500, seed=0,
         peaks.append(grid[int(np.argmax(smooth(t[idx], y[idx], w[idx])))])
     lo, hi = (np.percentile(peaks, [16, 84]) if len(peaks) >= 50 else (np.nan, np.nan))
     out.update(t_peak=float(grid[i]), t_lo=float(lo), t_hi=float(hi), bracketed=bracketed,
-               kernel_days=h, peak_log_afrho=float(s[i]), rms_dex=rms, drop_lo=drop_lo, drop_hi=drop_hi)
+               interior=interior, kernel_days=h, peak_log_afrho=float(s[i]), rms_dex=rms,
+               drop_lo=drop_lo, drop_hi=drop_hi)
     return out
 
 
@@ -455,72 +461,278 @@ def fit_colour_trend(log_rh, colour, err, min_side=4, n_boot=300):
                 delta_colour_err=st["delta_err"], dbic=st["dbic"], change_preferred=st["preferred"])
 
 
-# --------------------------------------------------------------- per target
-def analyse(phot, target, tp_jd=None, bands=("r", "g"), rhos=(10000, 20000),
-            min_side=3, n_boot=1000, break_min_points=10, break_min_dlog=0.2):
-    """Trends, peak, breaks and colour for one comet.
+# ------------------------------------------------------- tails and outbursts
+def sparse_tail(log_rh, max_n=4, max_frac=0.10, min_gap=0.10, min_core=5):
+    """Mark a small group of points isolated at either end of the r_h range.
 
-    Returns ``(trends, peaks, breaks, colours)``.  Legs are defined by the
-    activity peak, not perihelion: a comet sampled on both sides of T_p gets
-    a smoothed peak; when it is bracketed the series splits into ``rising``
-    and ``fading`` at that time, and when it sits at an edge of the coverage
-    the whole series is one phase (still rising, or already fading).  A comet
-    sampled on one side only is one leg, named by its orbital direction; the
-    peak is then not measurable, and no split is attempted.  Perihelion-split
-    rows are kept in ``trends`` under ``split == "perihelion"`` for reference.
+    A power-law fit is a lever: a handful of points far from the rest carry
+    most of the leverage and pull the slope away from what the bulk of the
+    data shows -- 10P has four frames at 3.6 au beyond a 0.135 dex gap from
+    the other 56, and they turn a steep onset into a moderate single law.
+    A group of at most ``max(max_n, max_frac * n)`` points separated from
+    the rest by a gap of at least *min_gap* dex is a tail; it is reported
+    and fitted separately, not silently dropped.
 
-    Every leg with at least *break_min_points* over *break_min_dlog* dex is
-    also fitted with a free-break broken power law and with a break imposed at
-    r_h = 3 au.  Colour is analysed per aperture on the whole series and, when
-    both peak-legs have enough pairs, per leg.
+    Returns a boolean mask, True on tail points.
     """
-    trends, peaks, breaks, colours = [], [], [], []
+    x = np.asarray(log_rh, float)
+    n = len(x)
+    tail = np.zeros(n, bool)
+    if n < min_core + 1:
+        return tail
+    order = np.argsort(x)
+    xs = x[order]
+    kmax = int(max(max_n, np.floor(max_frac * n)))
+    for end in ("high", "low"):
+        for k in range(1, kmax + 1):
+            if n - k < min_core:
+                break
+            gap = (xs[n - k] - xs[n - k - 1]) if end == "high" else (xs[k] - xs[k - 1])
+            if gap >= min_gap:
+                idx = order[n - k:] if end == "high" else order[:k]
+                tail[idx] = True
+                break
+    return tail
+
+
+def _extrapolate(t_prev, y_prev, t_at, max_gap):
+    """Recent level extended to *t_at*: a weighted line through the previous
+    points when there are enough of them and the gap is short, otherwise
+    their median.  A steep but smooth trend must extrapolate to itself."""
+    t_prev, y_prev = np.asarray(t_prev, float), np.asarray(y_prev, float)
+    if len(t_prev) >= 3 and np.ptp(t_prev) >= 2.0 and (t_at - t_prev.max()) <= max_gap:
+        A = np.column_stack([np.ones_like(t_prev), t_prev - t_prev.max()])
+        c, *_ = np.linalg.lstsq(A, y_prev, rcond=None)
+        return float(c[0] + c[1] * (t_at - t_prev.max()))
+    return float(np.median(y_prev))
+
+
+def detect_outbursts(t_days, log_afrho, min_rise_dex=0.30, baseline_n=5, baseline_days=60.0,
+                     end_tol_dex=0.10, confirm=True, min_points=3):
+    """Find brightenings that are too sudden and too sustained to be the trend.
+
+    An outburst is a *jump* above the recent trend that the next frame
+    shares and that then decays: 217P at 3.10 au went from ~29 to 162 cm in
+    one step and took forty days to come most of the way back.  The
+    single-frame anomaly flag (:func:`ztfcomet.phot.flag_anomalies`) has
+    already removed lone spikes, so what is left that jumps *and stays up*
+    is real.
+
+    The comparison is with the recent trend *extrapolated*, not the recent
+    median: a comet brightening steeply but smoothly toward its peak sits
+    above the median of its previous frames at every step, and a median
+    test opened a window at the start of such a series that never closed.
+    Walking forward in time, the previous *baseline_n* frames within
+    *baseline_days* (at least three) give a line; a frame more than
+    *min_rise_dex* above that line at its own time, confirmed by the next
+    frame keeping at least half the excess above the same line, opens a
+    window.  The window closes at the first frame whose three-frame running
+    median is within *end_tol_dex* of the pre-outburst line extrapolated to
+    it, or at the end of the data (``ended`` False).  An outburst *decays*:
+    a window that has not closed and whose second half is not fainter than
+    its first is a rapid onset of activity, not an outburst -- 261P jumps
+    0.4 dex and keeps rising to perihelion -- and is left to the trend.
+    Windows shorter than *min_points* frames are ignored: the single-frame
+    anomaly flag already handles spikes, and two frames cannot show a decay.
+
+    Returns a list of dicts (``i_start``, ``i_end`` -- inclusive indices in
+    time order -- ``t_start``, ``t_end``, ``rise_dex``, ``ended``,
+    ``n_points``) and the time-sorted index array, so callers can map back.
+    """
+    t = np.asarray(t_days, float)
+    y = np.asarray(log_afrho, float)
+    order = np.argsort(t)
+    t, y = t[order], y[order]
+    n = len(t)
+    windows = []
+    i = 1
+    while i < n:
+        prev = [j for j in range(i - 1, -1, -1) if t[i] - t[j] <= baseline_days][:baseline_n]
+        if len(prev) < 3:
+            i += 1
+            continue
+        tp, yp = t[prev], y[prev]
+        level = lambda tt: _extrapolate(tp, yp, tt, baseline_days / 2)   # noqa: E731
+        rise = y[i] - level(t[i])
+        if rise < min_rise_dex or (confirm and (i + 1 >= n or y[i + 1] - level(t[i + 1]) < 0.5 * rise)):
+            i += 1
+            continue
+        j = i + 1
+        ended = False
+        while j < n:
+            run = float(np.median(y[max(j - 1, i):min(j + 2, n)]))
+            if run - level(t[j]) <= end_tol_dex:
+                ended = True
+                break
+            j += 1
+        i_end = j - 1 if ended else n - 1
+        seg = y[i:i_end + 1]
+        decays = ended or (len(seg) >= 4 and np.median(seg[len(seg) // 2:]) < np.median(seg[:len(seg) // 2]) - 0.05)
+        if len(seg) >= min_points and decays:
+            windows.append(dict(i_start=int(i), i_end=int(i_end), t_start=float(t[i]), t_end=float(t[i_end]),
+                                rise_dex=float(rise), baseline_log=float(level(t[i])), ended=ended,
+                                n_points=int(i_end - i + 1)))
+            i = i_end + 1
+        else:
+            i += 1
+    return windows, order
+
+
+def outburst_mask(t_days, log_afrho, **kw):
+    """Boolean mask of points inside outburst windows, in the input order."""
+    windows, order = detect_outbursts(t_days, log_afrho, **kw)
+    mask = np.zeros(len(order), bool)
+    for w in windows:
+        mask[order[w["i_start"]:w["i_end"] + 1]] = True
+    return mask, windows
+
+
+def smooth_trend(log_rh, log_afrho, log_err, n_grid=120, bandwidth=None, min_weight=0.5):
+    """Kernel-smoothed log Afrho against log r_h over every point, for the eye.
+
+    A Gaussian kernel in log r_h, weights ``1/err^2`` capped at ten times
+    their median, bandwidth ``max(0.03 dex, 2 x median spacing)``.  Points
+    from both phases at the same r_h are averaged -- this is a guide to the
+    overall shape, not a model.  Returned only where the kernel-weighted
+    count exceeds *min_weight* points, so the curve stops with the data.
+    """
+    x = np.asarray(log_rh, float); y = np.asarray(log_afrho, float); e = np.asarray(log_err, float)
+    keep = np.isfinite(x) & np.isfinite(y) & np.isfinite(e) & (e > 0)
+    x, y, e = x[keep], y[keep], e[keep]
+    if len(x) < 4 or np.ptp(x) <= 0:
+        return np.array([]), np.array([])
+    xs = np.unique(x)
+    h = float(bandwidth) if bandwidth else max(0.03, 2.0 * float(np.median(np.diff(xs)))) if len(xs) > 1 else 0.03
+    w = 1.0 / e ** 2
+    w = np.minimum(w, 10.0 * np.median(w)) / np.median(w)
+    grid = np.linspace(x.min(), x.max(), n_grid)
+    k = np.exp(-0.5 * ((grid[:, None] - x[None, :]) / h) ** 2)
+    kw = k * w[None, :]
+    count = k.sum(1)
+    sm = (kw * y[None, :]).sum(1) / np.maximum(kw.sum(1), 1e-300)
+    ok = count >= min_weight
+    return grid[ok], sm[ok]
+
+
+# --------------------------------------------------------------- per target
+def _fit_row(base, split, leg, sub, counts, n_boot, extra=None):
+    fit = fit_powerlaw(sub["log_rh"], sub["log_afrho"], sub["log_afrho_err"], n_boot=n_boot)
+    g, why = grade_fit(fit, counts)
+    row = dict(**base, split=split, leg=leg, rh_min=float(sub["r"].min()), rh_max=float(sub["r"].max()),
+               grade=g, reasons="; ".join(why), **fit)
+    if extra:
+        row.update(extra)
+    return row, fit
+
+
+def analyse(phot, target, tp_jd=None, bands=("r", "g"), rhos=(10000, 20000),
+            min_side=3, n_boot=1000, break_min_points=10, break_min_dlog=0.10):
+    """Trends, peak, breaks, colour and outbursts for one comet.
+
+    Returns ``(trends, peaks, breaks, colours, outbursts)``.
+
+    Phases are defined by the activity peak: a comet sampled on both sides
+    of T_p gets a smoothed peak, and when that maximum is *interior* to the
+    coverage the series splits into ``rising`` and ``fading`` there (a
+    plateau before the peak still splits -- ``peak_bracketed`` records
+    whether the curve falls on both sides).  When the maximum sits at an
+    edge the whole series is one phase.  A one-sided comet is one leg named
+    by its orbital direction.  Perihelion-split rows are kept under
+    ``split == "perihelion"`` for reference.
+
+    Before any primary fit, outburst windows (:func:`detect_outbursts`) and
+    sparse tails (:func:`sparse_tail`) are removed from the leg and counted
+    (``n_outburst``, ``n_tail``); the tail and the pre-/post-outburst
+    stretches are fitted separately under ``split == "tail"`` and
+    ``split == "outburst"``.  Where a free-break law is preferred on a
+    primary leg, the two sides are also fitted as plain power laws under
+    ``split == "segment"`` -- the "divided" trend.
+    """
+    trends, peaks, breaks, colours, outbursts = [], [], [], [], []
     for band in bands:
         for rho in rhos:
             pts, counts = select_points(phot, band, rho)
             base = dict(target=target, band=band, rho_km=rho, **counts)
             if len(pts) == 0:
                 continue
-            inb, outb = pts[pts["leg"] == "inbound"], pts[pts["leg"] == "outbound"]
+            pts = pts.sort_values("obsjd").reset_index(drop=True)
+            # outbursts on the whole clean series, in time
+            omask, windows = outburst_mask(pts["obsjd"].to_numpy(), pts["log_afrho"].to_numpy())
+            for w in windows:
+                sel = pts[(pts["obsjd"] >= w["t_start"]) & (pts["obsjd"] <= w["t_end"])]
+                if sel.empty:
+                    continue
+                outbursts.append(dict(target=target, band=band, rho_km=rho, jd_start=w["t_start"],
+                                      jd_end=w["t_end"], t_start=(w["t_start"] - tp_jd) if tp_jd else np.nan,
+                                      t_end=(w["t_end"] - tp_jd) if tp_jd else np.nan,
+                                      rh_start=float(sel["r"].iloc[0]), rh_end=float(sel["r"].iloc[-1]),
+                                      rise_dex=w["rise_dex"], n_points=w["n_points"], ended=w["ended"]))
+            pts["outburst"] = omask
+            quiet = pts[~pts["outburst"]]
+            inb, outb = quiet[quiet["leg"] == "inbound"], quiet[quiet["leg"] == "outbound"]
             two_sided = len(inb) >= min_side and len(outb) >= min_side
-            legs = [("all", "all", pts)]
+            legs = [("all", "all", quiet)]
             for name, sub in (("inbound", inb), ("outbound", outb)):
                 if len(sub) >= 3:
                     legs.append(("perihelion", name, sub))
             pk, t = None, None
-            if tp_jd is not None and np.isfinite(tp_jd) and len(pts) >= 6:
-                t = pts["obsjd"].to_numpy() - tp_jd
-                pk = find_peak(t, pts["log_afrho"], pts["log_afrho_err"], n_boot=max(n_boot // 2, 200))
+            if tp_jd is not None and np.isfinite(tp_jd) and len(quiet) >= 6:
+                t = quiet["obsjd"].to_numpy() - tp_jd
+                pk = find_peak(t, quiet["log_afrho"], quiet["log_afrho_err"], n_boot=max(n_boot // 2, 200))
             if two_sided and pk is not None:
                 peaks.append(dict(target=target, band=band, rho_km=rho, n_inbound=len(inb),
                                   n_outbound=len(outb), t_min=float(t.min()), t_max=float(t.max()), **pk))
-                if pk["bracketed"]:
-                    for name, sub in (("rising", pts[t < pk["t_peak"]]), ("fading", pts[t >= pk["t_peak"]])):
-                        if len(sub) >= 3:
-                            legs.append(("peak", name, sub))
+                before, after = quiet[t < pk["t_peak"]], quiet[t >= pk["t_peak"]]
+                if pk["interior"] and len(before) >= min_side and len(after) >= min_side:
+                    legs += [("peak", "rising", before), ("peak", "fading", after)]
                 else:
-                    legs.append(("peak", "rising" if pk["t_peak"] > np.median(t) else "fading", pts))
+                    legs.append(("peak", "rising" if pk["t_peak"] > np.median(t) else "fading", quiet))
             for split, leg, sub in legs:
-                fit = fit_powerlaw(sub["log_rh"], sub["log_afrho"], sub["log_afrho_err"], n_boot=n_boot)
-                g, why = grade_fit(fit, counts)
                 primary = (split == "peak") if two_sided else (split == "perihelion")
-                trends.append(dict(**base, split=split, leg=leg, primary=primary,
-                                   rh_min=float(sub["r"].min()), rh_max=float(sub["r"].max()),
-                                   two_sided=two_sided, t_peak=(pk["t_peak"] if pk else np.nan),
-                                   peak_bracketed=(bool(pk["bracketed"]) if pk else False),
-                                   grade=g, reasons="; ".join(why), **fit))
+                tail = sparse_tail(sub["log_rh"].to_numpy()) if primary else np.zeros(len(sub), bool)
+                core = sub[~tail]
+                n_ob = int(pts["outburst"].sum()) if primary else 0
+                row, fit = _fit_row(base, split, leg, core, counts, n_boot, dict(
+                    primary=primary, two_sided=two_sided, t_peak=(pk["t_peak"] if pk else np.nan),
+                    peak_bracketed=(bool(pk["bracketed"]) if pk else False),
+                    peak_interior=(bool(pk["interior"]) if pk else False),
+                    n_tail=int(tail.sum()), n_outburst=n_ob, segment_of="", has_segments=False))
+                trends.append(row)
+                if tail.sum() >= 3:
+                    trow, _ = _fit_row(base, "tail", f"{leg} tail", sub[tail], counts, n_boot,
+                                       dict(primary=False, two_sided=two_sided, segment_of=leg))
+                    trends.append(trow)
+                if primary and n_ob:
+                    lo = pts[pts["obsjd"] < min(w["t_start"] for w in windows)]
+                    hi = pts[pts["obsjd"] > max(w["t_end"] for w in windows)]
+                    for name, seg in (("pre-outburst", lo), ("post-outburst", hi)):
+                        seg = seg[seg["leg"].isin(sub["leg"].unique())] if split == "perihelion" else seg
+                        if len(seg) >= 5:
+                            orow, _ = _fit_row(base, "outburst", name, seg, counts, n_boot,
+                                               dict(primary=False, two_sided=two_sided, segment_of=leg))
+                            trends.append(orow)
                 if fit["n"] >= break_min_points and fit["dlog_rh"] >= break_min_dlog:
-                    free = fit_broken_powerlaw(sub["log_rh"], sub["log_afrho"], sub["log_afrho_err"],
+                    free = fit_broken_powerlaw(core["log_rh"], core["log_afrho"], core["log_afrho_err"],
                                                n_boot=max(n_boot // 3, 100))
-                    at3 = fit_broken_powerlaw(sub["log_rh"], sub["log_afrho"], sub["log_afrho_err"],
+                    at3 = fit_broken_powerlaw(core["log_rh"], core["log_afrho"], core["log_afrho_err"],
                                               fixed_xb=np.log10(3.0), n_boot=0)
                     breaks.append(dict(target=target, band=band, rho_km=rho, split=split, leg=leg,
-                                       primary=primary, grade=g, rh_min=float(sub["r"].min()),
-                                       rh_max=float(sub["r"].max()), x_single=fit["x"],
+                                       primary=primary, grade=row["grade"], rh_min=float(core["r"].min()),
+                                       rh_max=float(core["r"].max()), x_single=fit["x"],
                                        x_single_err=fit["x_err_scaled"], **free,
                                        at3_testable=at3["testable"], x_lt3=at3["x_inner"],
                                        x_lt3_err=at3["x_inner_err"], x_gt3=at3["x_outer"],
                                        x_gt3_err=at3["x_outer_err"], at3_dbic=at3["dbic"]))
+                    if primary and free["preferred"]:
+                        row["has_segments"] = True
+                        rb = free["r_break"]
+                        for name, seg in ((f"{leg} r_h<{rb:.2f}", core[core["r"] < rb]),
+                                          (f"{leg} r_h>{rb:.2f}", core[core["r"] >= rb])):
+                            if len(seg) >= 3:
+                                srow, _ = _fit_row(base, "segment", name, seg, counts, n_boot,
+                                                   dict(primary=True, two_sided=two_sided, segment_of=leg,
+                                                        r_break=rb))
+                                trends.append(srow)
         if band != "r":
             continue
         for rho in rhos:
@@ -529,7 +741,7 @@ def analyse(phot, target, tp_jd=None, bands=("r", "g"), rhos=(10000, 20000),
                 continue
             series = [("all", pairs)]
             row = [r for r in trends if r["band"] == "r" and r["rho_km"] == rho and r["split"] == "peak"]
-            tpk = row[0]["t_peak"] if row and row[0]["peak_bracketed"] and tp_jd is not None else None
+            tpk = row[0]["t_peak"] if row and row[0]["peak_interior"] and tp_jd is not None else None
             if tpk is not None:
                 tt = pairs["obsjd"].to_numpy() - tp_jd
                 series += [("rising", pairs[tt < tpk]), ("fading", pairs[tt >= tpk])]
@@ -541,4 +753,5 @@ def analyse(phot, target, tp_jd=None, bands=("r", "g"), rhos=(10000, 20000),
                                     rh_min=float(sub["r"].min()), rh_max=float(sub["r"].max()),
                                     excess_median=float(sub["excess"].median()),
                                     gr_median=float(sub["gr"].median()) if sub["gr"].notna().any() else np.nan, **ct))
-    return (pd.DataFrame(trends), pd.DataFrame(peaks), pd.DataFrame(breaks), pd.DataFrame(colours))
+    return (pd.DataFrame(trends), pd.DataFrame(peaks), pd.DataFrame(breaks),
+            pd.DataFrame(colours), pd.DataFrame(outbursts))
