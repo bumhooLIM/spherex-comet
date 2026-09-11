@@ -34,9 +34,9 @@ sides.  It is 1 wherever 1/ρ holds, at every radius including inside the PSF
 core, and it is binned in km so that a departure tied to physical distance
 separates cleanly from one tied to pixels or S/N.
 
-Sample: 4,145 clean frames → 2,744 with S/N(10 px) > 5 and the comet profile
-peaking on-centre (691 off-peak excluded; see below) → **2,118 whose free sky
-converged off its bound**.  16 free slopes hit the m = 3 ceiling and are
+Sample, all 68 targets on profiles centred by `refine_centre`: 3,398 clean frames with
+S/N(10 px) > 5 → 3,273 peaking on-centre (125 still off-peak, against 691 before the fix)
+→ **2,735 whose free sky converged off its bound**.  16 free slopes hit the m = 3 ceiling and are
 treated as failed.
 
 ## Results
@@ -45,9 +45,9 @@ treated as failed.
 
 | S/N at 10 px | n | naive slope | corrected m [16–84%] | at sky bound |
 |---|---|---|---|---|
-| 5–20 | 440 | 1.72 | **1.29** [0.99, 1.76] | 42% |
-| 20–60 | 625 | 1.65 | **1.15** [0.90, 1.45] | 19% |
-| > 60 | 1,053 | 1.42 | **1.00** [0.79, 1.23] | 13% |
+| 5–20 | 527 | 1.80 | **1.32** [1.00, 1.71] | 38% |
+| 20–60 | 835 | 1.66 | **1.22** [0.97, 1.50] | 15% |
+| > 60 | 1,373 | 1.43 | **1.04** [0.85, 1.27] | 3% |
 
 The PSF core alone accounts for ~0.4 in slope at every S/N; the sky adds ~0.3
 more at low S/N.  Neither is coma physics.  At S/N > 60, 65% of frames sit in
@@ -125,10 +125,11 @@ the naive slope as an upper limit on steepness, not a value.
   the inner ~10,000 km is mostly PSF; the test there is of the wings, from
   ~1 FWHM outward.
 
-## A centring defect worth fixing
+## The centring defect, since fixed
 
-**691 frames — 20% of the clean, S/N > 5 sample — were excluded because the
-comet profile does not peak in the innermost annulus.**  The star stack never
+Before the fix, **691 frames — 20% of the clean, S/N > 5 sample — were excluded because the
+comet profile did not peak in the innermost annulus.**  With `refine_centre` — the optocentre within a
+disc covering the winpos and ephemeris positions, guard calibrated on its own null — the exclusion is 125 frames.  The star stack never
 does this (0.0%), so the extraction is sound; the comet centre is not.  It is
 the photometry's windowed centroid, and the off-peak fraction tracks how far
 that centroid moved from the ephemeris:
