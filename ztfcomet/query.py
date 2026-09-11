@@ -57,6 +57,8 @@ class QueryReport:
 
     n_eph_steps: int = 0
     n_eph_kept: int = 0
+    n_cut_rh: int = 0        # epochs removed by rh_max
+    n_cut_vmag: int = 0      # epochs removed by vmag_max
     n_steps_queried: int = 0
     n_steps_no_coverage: int = 0
     n_steps_failed: int = 0
@@ -368,9 +370,13 @@ def search_frames(target, progress=True):
         log.info("%s: Horizons returned %s", target.name, returned)
 
     report.n_eph_steps = len(eph)
+    n0 = len(eph)
     eph = eph[eph["r"] < qc.rh_max]
+    report.n_cut_rh = n0 - len(eph)
     if "Tmag" in eph.columns:
+        n1 = len(eph)
         eph = eph[eph["Tmag"] < qc.vmag_max]
+        report.n_cut_vmag = n1 - len(eph)
     eph = eph.reset_index(drop=True)
     report.n_eph_kept = len(eph)
 

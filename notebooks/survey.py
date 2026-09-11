@@ -202,9 +202,14 @@ def process(designation, args, root, prior=None):
         if eph is not None and not eph.empty:
             eph.to_csv(datadir / "eph.csv", index=False)
         if report.n_eph_kept == 0:
-            entry.update(status="no_epochs", note=f"never brighter than Vmag {target.query.vmag_max:g}")
-            log.info("%s: no epoch reaches Vmag %g -- leaving the directory empty",
-                     target.name, target.query.vmag_max)
+            # Say which cut did it: C/2014 UN271 at Tmag 16 was reported as
+            # "never brighter than Vmag 20" when rh_max = 10 au had removed it.
+            why = (f"r_h >= {target.query.rh_max:g} au on every epoch" if report.n_cut_rh == report.n_eph_steps
+                   else f"never brighter than Vmag {target.query.vmag_max:g}" if report.n_cut_vmag and not report.n_cut_rh
+                   else f"{report.n_cut_rh} epochs beyond r_h {target.query.rh_max:g} au, "
+                        f"{report.n_cut_vmag} fainter than Vmag {target.query.vmag_max:g}")
+            entry.update(status="no_epochs", note=why)
+            log.info("%s: no epoch passes the cuts (%s) -- leaving the directory empty", target.name, why)
             return _finish(entry, started)
         if frames.empty:
             entry.update(status="no_frames", note="epochs pass the cuts but ZTF has no coverage")

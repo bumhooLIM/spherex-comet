@@ -333,6 +333,19 @@ TARGETS: dict[str, Target] = {
         query=QueryConfig(interval_days=5, rh_max=9),
         note="2P/Encke.",
     ),
+    "2014UN271": Target(
+        name="2014UN271",
+        designation="2014 UN271",
+        # Bernardinelli-Bernstein: Tmag 16.1-16.6 at r_h 13.6-15.3 au through
+        # the survey window.  The default rh_max of 10 au silently removed every
+        # epoch before the magnitude cut ran; for this comet only the magnitude
+        # cut applies.  With the cut lifted the IRSA search still returns
+        # nothing: the comet is at declination -65 to -75 deg throughout
+        # 2025-2026, and ZTF reaches only to about -30 deg.
+        query=QueryConfig(interval_days=5, rh_max=100.0, vmag_max=20),
+        note="C/2014 UN271 (Bernardinelli-Bernstein): bright at 14 au, no r_h cut; "
+             "unobservable from Palomar (dec < -65 deg) in 2025-2026.",
+    ),
     "2019Y3": Target(
         name="2019Y3",
         designation="2019 Y3",
