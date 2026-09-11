@@ -41,6 +41,7 @@ import argparse
 import dataclasses
 import json
 import logging
+import os
 import socket
 import sys
 import time
@@ -397,6 +398,14 @@ def main(argv=None):
     # and survey_status.csv, so running without it silently restarts the whole
     # survey in the wrong place -- which is exactly what happened once when the
     # volume was briefly unresolvable at import.
+    # A pinned root that is not there is not a fallback, so the check below
+    # would let the run start -- and an external SSD that has dropped off the
+    # bus (twice, with I/O errors, during long runs) leaves exactly that state.
+    pinned = os.environ.get("ZTFCOMET_DATA")
+    if pinned and not Path(pinned).is_dir():
+        sys.stderr.write(f"REFUSING TO START: ZTFCOMET_DATA={pinned} is not a directory. "
+                         "Mount the drive, or unset the variable to use the local data/ root.\n")
+        return 2
     if zc.directory.using_fallback_root() and not args.allow_fallback_root:
         sys.stderr.write(
             f"REFUSING TO START: data root resolved to {root}, the in-project\n"

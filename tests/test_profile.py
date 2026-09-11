@@ -253,3 +253,59 @@ def test_sky_over_subtraction_steepens_naive_slope_and_fit_sky_recovers_it():
     assert with_sky["m"] == pytest.approx(1.0, abs=0.15), with_sky
     assert with_sky["sky_offset"] == pytest.approx(-2.0, abs=0.7), with_sky
     assert abs(with_sky["m"] - 1.0) < abs(plain["m"] - 1.0)
+
+
+# ---------------------------------------------------------------- centring
+def test_refine_centre_recovers_a_sub_pixel_peak_from_an_offset_start():
+    n = 61
+    x0, y0 = 30.3, 29.8
+    img = gaussian(amp=2000.0, fwhm=2.5, n=n, x0=x0, y0=y0) + 100.0
+    img += np.random.default_rng(1).normal(0, 0.5, img.shape)
+    cen = pf.refine_centre(img, x0 + 1.5, y0 - 1.0)
+    assert cen["refined"]
+    assert abs(cen["x"] - x0) < 0.15 and abs(cen["y"] - y0) < 0.15
+    assert 1.5 < cen["shift_pix"] < 2.0
+
+
+def test_refine_centre_finds_the_nucleus_of_a_coma_started_off_peak():
+    img, _, c = _synthetic_scene(m_true=1.0, nuc_flux=6000.0)
+    cen = pf.refine_centre(img, c + 1.5, c + 0.5)
+    assert cen["refined"]
+    assert np.hypot(cen["x"] - c, cen["y"] - c) < 0.25
+
+
+def test_refine_centre_keeps_the_input_on_pure_noise():
+    rng = np.random.default_rng(2)
+    img = 100.0 + rng.normal(0, 1.0, (61, 61))
+    cen = pf.refine_centre(img, 30.0, 30.0)
+    assert not cen["refined"]
+    assert cen["shift_pix"] == 0.0 and cen["x"] == 30.0
+
+
+def test_refine_centre_leaves_an_on_peak_comet_alone():
+    img, _, c = _synthetic_scene(m_true=1.0, nuc_flux=6000.0)
+    cen = pf.refine_centre(img, c, c)
+    assert cen["shift_pix"] < 0.2
+
+
+def test_refine_centre_rarely_moves_on_pure_noise():
+    # The contrast statistic is a max over patches minus one sample, so it is
+    # biased high on noise; the guard must hold well below the rate that a
+    # ring-based noise estimate allowed (17.5% at 3 sigma).
+    rng = np.random.default_rng(3)
+    moved = 0
+    for _ in range(200):
+        img = 100.0 + rng.normal(0, 1.0, (41, 41))
+        moved += pf.refine_centre(img, 20.0 + rng.uniform(-.4, .4), 20.0 + rng.uniform(-.4, .4))["refined"]
+    assert moved <= 4
+
+
+def test_refine_centre_reaches_a_far_nucleus_only_with_the_ephemeris():
+    # winpos dragged 3 px down a tail; the ephemeris sits 0.3 px from the nucleus
+    img, _, c = _synthetic_scene(m_true=1.0, nuc_flux=6000.0)
+    alone = pf.refine_centre(img, c + 3.0, c)
+    with_ref = pf.refine_centre(img, c + 3.0, c, x_ref=c - 0.3, y_ref=c + 0.2)
+    assert np.hypot(alone["x"] - c, alone["y"] - c) > 0.8          # 2 px disc cannot reach it
+    # separation 3.31 px -> half 1.65 + 2.0 = 3.65, rounded up to the half pixel
+    assert with_ref["refined"] and with_ref["search_pix"] == 4.0
+    assert np.hypot(with_ref["x"] - c, with_ref["y"] - c) < 0.25

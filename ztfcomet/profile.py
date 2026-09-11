@@ -81,7 +81,8 @@ class ProfileConfig:
                  maxiters=5, max_stars=20, snr_min=10.0, saturation_fraction=0.8,
                  detect_sigma=5.0, exclude_comet_pix=30.0, min_pixels=3,
                  fit_rmin_fwhm=1.5, fit_rmax_pix=10.0, star_isolation_pix=None,
-                 oversample_stars=True):
+                 oversample_stars=True, recentre=True, recentre_search_pix=2.0,
+                 recentre_smooth_pix=0.5, recentre_max_fp=0.005, recentre_max_search_pix=4.0):
         self.radii = np.asarray(DEFAULT_RADII if radii is None else radii, float)
         self.half_width = float(half_width)
         self.oversample = int(oversample)
@@ -98,6 +99,13 @@ class ProfileConfig:
         # Profile the field stars on the same oversampled grid as the comet, so
         # the two are strictly like-for-like. Off, stars use native pixels.
         self.oversample_stars = bool(oversample_stars)
+        # Re-centre the comet on its optocentre before profiling; see
+        # refine_centre for why the windowed centroid is not it.
+        self.recentre = bool(recentre)
+        self.recentre_search_pix = float(recentre_search_pix)
+        self.recentre_smooth_pix = float(recentre_smooth_pix)
+        self.recentre_max_fp = float(recentre_max_fp)
+        self.recentre_max_search_pix = float(recentre_max_search_pix)
         # Another source inside this radius disqualifies a star; default is the
         # outer annulus edge plus a margin, so the profile is never blended.
         self.star_isolation_pix = (float(star_isolation_pix) if star_isolation_pix
@@ -358,7 +366,7 @@ def stack_star_profiles(sub, stars, profile_config=None, oversample=1):
 
 # ------------------------------------------------------------------ per frame
 def profile_frame(path, x, y, sky, gain, readnoise, saturate, fwhm_pix,
-                  profile_config=None):
+                  profile_config=None, x_ref=None, y_ref=None):
     """Comet and field-star profiles for one frame.
 
     Returns
@@ -383,6 +391,13 @@ def profile_frame(path, x, y, sky, gain, readnoise, saturate, fwhm_pix,
         sub, stars, pc, oversample=pc.oversample if pc.oversample_stars else 1)
 
     sky_level = float(sky) if np.isfinite(sky) else float(bkg.globalback)
+    cen = (refine_centre(data, x, y, search_pix=pc.recentre_search_pix,
+                         smooth_pix=pc.recentre_smooth_pix, oversample=pc.oversample,
+                         max_false_positive=pc.recentre_max_fp, x_ref=x_ref, y_ref=y_ref,
+                         max_search_pix=pc.recentre_max_search_pix)
+           if pc.recentre else dict(x=float(x), y=float(y), shift_pix=0.0, snr=np.nan,
+                                    threshold=np.nan, search_pix=np.nan, refined=False))
+    x, y = cen["x"], cen["y"]
     comet = radial_profile(data, x, y, pc.radii, pc.half_width, sky=sky_level,
                            oversample=pc.oversample, sigma=pc.sigma, maxiters=pc.maxiters,
                            min_pixels=pc.min_pixels)
@@ -409,6 +424,9 @@ def profile_frame(path, x, y, sky, gain, readnoise, saturate, fwhm_pix,
     idx = int(np.argmin(np.abs(comet["r_pix"].to_numpy() - r_ex)))
     summary = dict(
         central_sb=c0, sky=sky_level,
+        x_profile=x, y_profile=y, recentre_shift_pix=cen["shift_pix"],
+        recentre_snr=cen["snr"], recentre_threshold=cen["threshold"],
+        recentre_search_pix=cen["search_pix"], recentred=cen["refined"],
         n_stars=int(stack["n_stars"].max()) if len(stack) else 0,
         n_stars_selected=int(len(stars)),
         slope_comet=slope_c, slope_comet_unclipped=slope_u, slope_star=slope_s,
@@ -417,6 +435,176 @@ def profile_frame(path, x, y, sky, gain, readnoise, saturate, fwhm_pix,
         excess_at_3fwhm=float(comet["excess"].iloc[idx]),
     )
     return comet, stack, per_star, summary
+
+
+# ------------------------------------------------------------ optocentre
+_NULL_THRESHOLDS = {}
+
+
+def _peak_contrast(box, cx, cy, oversample, smooth_pix, search_pix, dx=None, dy=None):
+    """Smoothed maximum inside the search disc, centred at (dx, dy) or at the
+    reference (cx, cy) by default, minus the smoothed value at the reference
+    (cx, cy), in units of the smoothed noise estimated from the box itself.
+
+    One routine for both the live call and the null calibration, so that any
+    bias in the noise estimate is the same in both and cancels in the
+    threshold.  Coordinates are box-local native pixels; sub-pixel ``j`` sits
+    at ``(j + 0.5)/oversample - 0.5`` (``grid_mode=True``).
+
+    Returns ``(snr, i0, j0, z, sub_x, sub_y)``; ``snr`` is NaN when the box
+    gives no usable noise estimate.
+    """
+    from scipy import ndimage
+
+    os_ = int(oversample)
+    box = np.where(np.isfinite(box), box, np.nanmedian(box))
+    z = ndimage.gaussian_filter(
+        ndimage.zoom(box, os_, order=1, grid_mode=True, mode="nearest"), smooth_pix * os_)
+    # Native pixel noise from a robust high-pass, times the gain of the zoom
+    # and smoothing measured on unit noise of the same shape.
+    resid = box - ndimage.median_filter(box, size=5, mode="nearest")
+    sigma_native = 1.4826 * float(np.median(np.abs(resid - np.median(resid))))
+    unit = np.random.default_rng(12345).standard_normal(box.shape)
+    gain = float(np.std(ndimage.gaussian_filter(
+        ndimage.zoom(unit, os_, order=1, grid_mode=True, mode="nearest"), smooth_pix * os_)))
+    noise = sigma_native * gain
+    sub_y = (np.arange(z.shape[0]) + 0.5) / os_ - 0.5
+    sub_x = (np.arange(z.shape[1]) + 0.5) / os_ - 0.5
+    dx = cx if dx is None else dx
+    dy = cy if dy is None else dy
+    rr = np.hypot(sub_x[None, :] - dx, sub_y[:, None] - dy)
+    inside = rr <= search_pix
+    if not inside.any() or not np.isfinite(noise) or noise <= 0:
+        return np.nan, 0, 0, z, sub_x, sub_y
+    i0, j0 = np.unravel_index(int(np.argmax(np.where(inside, z, -np.inf))), z.shape)
+    ic, jc = int(np.argmin(np.abs(sub_y - cy))), int(np.argmin(np.abs(sub_x - cx)))
+    return float((z[i0, j0] - z[ic, jc]) / noise), i0, j0, z, sub_x, sub_y
+
+
+def _null_contrast_threshold(shape, oversample, smooth_pix, search_pix, max_false_positive, n=1000):
+    """Contrast that a pure-noise box exceeds with probability *max_false_positive*.
+
+    The recentring statistic is a maximum over several correlated patches
+    minus one sample, so on noise alone it sits well above zero: with a
+    correctly calibrated sigma, a nominal 4-sigma cut still moved 4% of
+    pure-noise frames and 3 sigma moved 16%.  Its null distribution depends
+    only on the geometry, so it is measured once per box shape on unit noise,
+    through the same routine as the live call, and the requested quantile is
+    the threshold.
+    """
+    key = (tuple(shape), int(oversample), float(smooth_pix), float(search_pix),
+           float(max_false_positive))
+    if key in _NULL_THRESHOLDS:
+        return _NULL_THRESHOLDS[key]
+    rng = np.random.default_rng(2024)
+    stats = np.empty(n)
+    for k in range(n):
+        cy = (shape[0] - 1) / 2.0 + rng.uniform(-0.5, 0.5)
+        cx = (shape[1] - 1) / 2.0 + rng.uniform(-0.5, 0.5)
+        stats[k] = _peak_contrast(rng.standard_normal(shape), cx, cy,
+                                  oversample, smooth_pix, search_pix)[0]
+    thr = float(np.nanquantile(stats, 1.0 - max_false_positive))
+    _NULL_THRESHOLDS[key] = thr
+    return thr
+
+
+def refine_centre(data, x, y, search_pix=2.0, smooth_pix=0.5, oversample=4, max_false_positive=0.005,
+                  x_ref=None, y_ref=None, max_search_pix=4.0):
+    """Move a comet's profile centre from the windowed centroid to the optocentre.
+
+    The photometry centroid is ``sep.winpos``: a Gaussian-windowed centroid,
+    the right estimator for a star and the wrong one for a coma.  A 1/rho coma
+    is far heavier-winged than a Gaussian, so any asymmetry inside the window
+    -- a fan, a tail, the sunward gradient -- pulls the centroid off the
+    nucleus.  Across the survey the comet profile peaked outside its innermost
+    annulus in 19% of clean frames, rising from 6% when winpos had moved
+    < 0.5 px from the ephemeris to 57% when it had moved 2-5 px, while the
+    field stars (centred by sep on the same frames) never did.  A profile
+    centred off the peak starts with a rising inner segment, and the
+    PSF-convolved model's nucleus term then has nothing to fit.
+
+    The optocentre is the maximum of the oversampled cutout after a light
+    Gaussian smoothing, searched within *search_pix* of the input position and
+    refined to sub-pixel precision with a 3x3 quadratic.  The input position is
+    kept unless that maximum exceeds the value at the input by more than pure
+    noise would with probability *max_false_positive*: a faint comet's noise
+    peak is not a better centre than its centroid, and a comet already on its
+    peak is left alone.
+
+    Parameters
+    ----------
+    data : ndarray
+        Image in DN; NaN pixels are replaced by the local median.
+    x, y : float
+        Starting centre, native 0-based pixel coordinates.
+    search_pix, smooth_pix : float
+        Search radius and Gaussian sigma, both in native pixels.
+    x_ref, y_ref : float, optional
+        An independent estimate of the nucleus position -- the ephemeris.
+        When given, the search disc covers both it and (x, y): centred on
+        their midpoint, radius half their separation plus *search_pix*,
+        capped at *max_search_pix*.  Without it a centroid dragged 3 px down
+        a tail cannot find its way back: the search around (x, y) alone then
+        lands, confidently, on the brightest point of the disc edge facing
+        the nucleus -- 40P's shifts piled up at 1.9-2.1 px for exactly that
+        reason.
+    max_search_pix : float
+        Cap on the adaptive radius; a nucleus further than this from the
+        midpoint of two estimates of its position is not the same object.
+    oversample : int
+        Zoom factor; use the same one as :func:`radial_profile` so the two
+        agree on where sub-pixels sit.
+    max_false_positive : float
+        Probability that a pure-noise frame is moved.  The contrast threshold
+        is the matching quantile of the statistic's null distribution, measured
+        once per box shape (see :func:`_null_contrast_threshold`); a sigma
+        cut cannot do this, because the statistic is biased high on noise.
+
+    Returns
+    -------
+    dict
+        ``x``, ``y`` (native coordinates), ``shift_pix``, ``snr`` (the contrast
+        found, in units of smoothed noise, whether or not it justified a move),
+        ``threshold`` (what it had to exceed), ``search_pix`` (the radius
+        used), ``refined``.
+    """
+    os_ = int(oversample)
+    # Rounded to half a pixel so the null calibration caches per radius.
+    if (x_ref is not None and y_ref is not None and np.isfinite(x_ref) and np.isfinite(y_ref)):
+        half_sep = 0.5 * float(np.hypot(x_ref - x, y_ref - y))
+        xd, yd = 0.5 * (float(x) + float(x_ref)), 0.5 * (float(y) + float(y_ref))
+        radius = float(np.clip(np.ceil(2.0 * (half_sep + search_pix)) / 2.0, search_pix, max_search_pix))
+    else:
+        xd, yd, radius = float(x), float(y), float(search_pix)
+    keep = dict(x=float(x), y=float(y), shift_pix=0.0, snr=np.nan, threshold=np.nan,
+                search_pix=radius, refined=False)
+    half = int(np.ceil(radius + 3.0 * smooth_pix + 2.0))
+    xi, yi = int(round(xd)), int(round(yd))
+    x0, y0 = max(xi - half, 0), max(yi - half, 0)
+    x1, y1 = min(xi + half + 1, data.shape[1]), min(yi + half + 1, data.shape[0])
+    box = np.asarray(data[y0:y1, x0:x1], float)
+    if box.shape[0] < 5 or box.shape[1] < 5 or not np.isfinite(box).any():
+        return keep
+
+    snr, i0, j0, z, sub_x, sub_y = _peak_contrast(box, x - x0, y - y0, os_, smooth_pix, radius,
+                                                  dx=xd - x0, dy=yd - y0)
+    if not np.isfinite(snr):
+        return keep
+    threshold = _null_contrast_threshold(box.shape, os_, smooth_pix, radius, max_false_positive)
+    keep.update(snr=float(snr), threshold=float(threshold))
+    if snr < threshold:
+        return keep
+
+    def _parabola(fm, f0, fp):
+        d = fm - 2.0 * f0 + fp
+        return float(np.clip((fm - fp) / (2.0 * d), -0.5, 0.5)) if d < 0 else 0.0
+
+    di = _parabola(z[i0 - 1, j0], z[i0, j0], z[i0 + 1, j0]) if 0 < i0 < z.shape[0] - 1 else 0.0
+    dj = _parabola(z[i0, j0 - 1], z[i0, j0], z[i0, j0 + 1]) if 0 < j0 < z.shape[1] - 1 else 0.0
+    xn = x0 + sub_x[j0] + dj / os_
+    yn = y0 + sub_y[i0] + di / os_
+    return dict(x=float(xn), y=float(yn), shift_pix=float(np.hypot(xn - x, yn - y)),
+                snr=float(snr), threshold=float(threshold), search_pix=radius, refined=True)
 
 
 # ------------------------------------------------------- PSF-convolved model
@@ -604,7 +792,7 @@ def run_profiles(target, table, datadir, profile_config=None, progress=True,
     target : ztfcomet.config.Target
     table : pandas.DataFrame
         Photometry table.  Only one row per frame is used (the smallest
-        aperture), for the centroid and sky level.
+        aperture), for the starting centroid and the sky level.
     datadir : path-like
     plots : bool
         Per-frame figures into ``fig/<target>/profile/`` plus one summary.
@@ -651,7 +839,8 @@ def run_profiles(target, table, datadir, profile_config=None, progress=True,
             comet, stack, per_star, summ = profile_frame(
                 path, x, y, row.get("msky", np.nan), hdr.get("GAIN", row.get("egain", 6.2)),
                 hdr.get("READNOI", row.get("readnoise", 9.7)), hdr.get("SATURATE", 6e4),
-                row.get("fwhm_pix", np.nan), pc)
+                row.get("fwhm_pix", np.nan), pc,
+                x_ref=row.get("x_ephem", np.nan), y_ref=row.get("y_ephem", np.nan))
         except Exception as exc:                                # noqa: BLE001
             log.warning("%s: profile failed on %s: %s", target.name, row["file"], exc)
             continue
