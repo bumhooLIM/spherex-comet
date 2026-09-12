@@ -1,8 +1,12 @@
 """Forward model: gas production rates -> monochromatic coma emission spectrum.
 
-Ported unchanged from ``emission-fitter/gasmodel.py`` (v0.1.0); every equation was verified
-against a re-derivation in ``doc/fitting_methodology.md`` section 9.  Implements Layers 0-4 of the
-concept design (``doc/model_concept.md``):
+Ported from ``emission-fitter/gasmodel.py`` (v0.1.0); every equation was verified against a
+re-derivation in ``doc/fitting_methodology.md`` section 9.  Since 2026-09-11 Layers 3-4 take the
+fluorescence efficiencies and band shapes from the reconstructed GSFC-style database
+(:mod:`fluorescence`, ``ModelParams.profile_source = "gfm"``) and scale g(CO) with the comet's
+heliocentric velocity (Swings effect, ``ModelParams.co_swings``); the previous Gaussian bands
+remain available as ``profile_source = "gaussian"``.  Implements Layers 0-4 of the concept design
+(``doc/model_concept.md``):
 
 ===== ===================================================================================
 Layer  Content
@@ -10,15 +14,16 @@ Layer  Content
 0      Geometry -- r_h/Delta scalings, r_h-scaled lifetimes, projected aperture
 1      Coma density -- Haser profile per species
 2      Aperture integration -- Yamamoto (1981) Bessel filling factor
-3      Excitation -- g_b(r_h) = g_b(1 au) / r_h^2, optional pump-opacity correction
-4      Monochromatic emission -- band fluxes distributed over unit-area band profiles
+3      Excitation -- g(r_h, v_h) = g(1 au) s(v_h) / r_h^2, optional pump-opacity correction
+4      Monochromatic emission -- the species' g_lambda template times the photon energy
 ===== ===================================================================================
 
 The single most useful structural fact, and the reason the fitter is a linear solve: for one
 species every band shares the same ``N_ap``, the same ``r_h^-2`` and the same ``1/(4 pi Delta^2)``,
 so the *relative* weights between its bands are fixed and only the amplitude depends on geometry.
 Each species therefore has a geometry-independent spectral shape (:func:`species_shape_mjy`) times a
-scalar amplitude (:func:`amplitude_per_unit_Q`).
+scalar amplitude (:func:`amplitude_per_unit_Q`).  The velocity dependence of g(CO) is a scalar too
+(one band dominates), so it multiplies the amplitude and the fit stays linear.
 """
 
 from __future__ import annotations
@@ -29,11 +34,12 @@ import numpy as np
 from scipy.integrate import quad
 from scipy.special import k0, k1, modstruve
 
+from . import fluorescence as _fl
 from .config import (BANDS, C_LIGHT, H_PLANCK, KM_M, AU_M, KAPPA_PUMP, RHO_TAU_REF_KM, SPECIES,
                      TAU_1AU, WM2UM_TO_MJY, ModelParams)
 
 __all__ = [
-    "filling_factor", "tau_at_rh", "column_per_unit_Q", "amplitude_per_unit_Q",
+    "filling_factor", "tau_at_rh", "column_per_unit_Q", "amplitude_per_unit_Q", "swings_factor",
     "band_profile", "species_shape_mjy", "hires_grid", "spectrum_mjy", "opacity_factor",
 ]
 
@@ -135,15 +141,26 @@ def column_per_unit_Q(species: str, r_h_au, params: ModelParams):
     return tau * np.atleast_1d(filling_factor(x))
 
 
-def amplitude_per_unit_Q(species: str, r_h_au, delta_au, params: ModelParams):
+def swings_factor(species: str, v_h_kms, params: ModelParams):
+    """``g(v_h) / g(0)`` of the species (Layer 3): the CO table of the fluorescence database when
+    ``params.co_swings`` is on, otherwise 1.  ``v_h_kms`` may be an array or None/NaN (-> 1)."""
+    if not params.co_swings or v_h_kms is None or species not in _fl.SWINGS_SPECIES:
+        return 1.0
+    return _fl.swings_factor(species, v_h_kms, params.T_rot)
+
+
+def amplitude_per_unit_Q(species: str, r_h_au, delta_au, params: ModelParams, v_h_kms=None):
     """Geometric amplitude multiplying a species' fixed spectral shape, per unit Q.
 
-    Returns ``N_ap/Q * r_h^-2 / (4 pi Delta^2)`` in SI-compatible units such that multiplying by
-    :func:`species_shape_mjy` and by Q gives mJy.
+    Returns ``N_ap/Q * s(v_h) * r_h^-2 / (4 pi Delta^2)`` in SI-compatible units such that
+    multiplying by :func:`species_shape_mjy` and by Q gives mJy.  ``s(v_h)`` is the Swings factor
+    of :func:`swings_factor` (CO only); ``v_h_kms`` is the heliocentric radial velocity of each
+    measurement, positive receding, and may be omitted (factor 1).
     """
     r_h = np.asarray(r_h_au, dtype=float)
     delta_m = np.asarray(delta_au, dtype=float) * AU_M
     return (column_per_unit_Q(species, r_h, params)
+            * swings_factor(species, v_h_kms, params)
             * r_h ** -2.0
             / (4.0 * np.pi * delta_m ** 2))
 
@@ -188,14 +205,11 @@ def opacity_factor(species: str, Q: float, r_h_au: float, params: ModelParams) -
 
 # ================================================================= Layer 4: monochromatic emission
 def band_profile(lam_um, band, T_rot: float = 70.0):
-    """Unit-area band profile :math:`\\Phi_b(\\lambda)` [um^-1].
+    """Unit-area Gaussian band profile :math:`\\Phi_b(\\lambda)` [um^-1] of the *legacy* model.
 
-    PLACEHOLDER: a Gaussian of the band's tabulated intrinsic FWHM. The real implementation should
-    interpolate precomputed unit-normalised fluorescence templates in (T_rot, r_h). ``T_rot`` is
-    accepted now so call sites do not change when templates arrive.
-
-    Because the profile is unit-normalised, replacing it changes band *shapes* but leaves every
-    band-integrated flux -- and therefore every retrieved Q -- unchanged.
+    Used only for ``ModelParams.profile_source = "gaussian"``; the main model takes the band
+    shapes from the fluorescence database (:func:`species_shape_mjy`).  ``T_rot`` is accepted for
+    signature compatibility and ignored.
     """
     sigma = band.fwhm_um / (2.0 * np.sqrt(2.0 * np.log(2.0)))
     lam = np.asarray(lam_um, dtype=float)
@@ -211,24 +225,34 @@ def hires_grid(params: ModelParams) -> np.ndarray:
 def species_shape_mjy(species: str, lam_um, params: ModelParams) -> np.ndarray:
     """Geometry-independent spectral shape of one species, in mJy per unit amplitude.
 
-    Combines every band of the species weighted by ``g_b(1 au) * hc/lambda_b`` -- the ratios that
-    are fixed regardless of r_h, Delta or aperture -- and converts F_lambda to F_nu so the result
-    can be compared directly with a flux-density measurement.
+    ``profile_source = "gfm"``: the database template ``g_lambda(lambda; T_rot)`` [photons s^-1
+    molecule^-1 um^-1] rebinned onto ``lam_um`` (flux-conserving) times the photon energy --
+    every band the species emits between 0.7 and 5.0 um, with its strength and shape, at 1 au and
+    v_h = 0.  ``"gaussian"``: the eight bands of :data:`config.BANDS`, each ``g_b(1 au) *
+    hc/lambda_b`` spread over a unit-area Gaussian.  Either way F_lambda is converted to F_nu so
+    the result compares directly with a flux-density measurement.
 
     Multiply by :func:`amplitude_per_unit_Q` and by Q to get mJy.
     """
     lam = np.asarray(lam_um, dtype=float)
-    out = np.zeros_like(lam)
-    for b in BANDS:
-        if b.species != species:
-            continue
-        e_photon = H_PLANCK * C_LIGHT / (b.lam_um * 1e-6)      # J per emitted photon
-        out += b.g1au * e_photon * band_profile(lam, b, params.T_rot)
+    if params.profile_source == "gfm":
+        g_lam = _fl.g_lambda(species, lam, params.T_rot)
+        e_photon = H_PLANCK * C_LIGHT / (lam * 1e-6)           # J per emitted photon, per cell
+        out = g_lam * e_photon
+    elif params.profile_source == "gaussian":
+        out = np.zeros_like(lam)
+        for b in BANDS:
+            if b.species != species:
+                continue
+            e_photon = H_PLANCK * C_LIGHT / (b.lam_um * 1e-6)
+            out += b.g1au * e_photon * band_profile(lam, b, params.T_rot)
+    else:
+        raise ValueError(f"unknown profile_source {params.profile_source!r} (gfm | gaussian)")
     return out * lam ** 2 * WM2UM_TO_MJY
 
 
 def spectrum_mjy(lam_um, Q: dict, r_h_au: float, delta_au: float,
-                 params: ModelParams) -> dict:
+                 params: ModelParams, v_h_kms=None) -> dict:
     """Monochromatic gas spectrum [mJy] at a single geometry.
 
     Parameters
@@ -240,6 +264,8 @@ def spectrum_mjy(lam_um, Q: dict, r_h_au: float, delta_au: float,
     r_h_au, delta_au : float
         Heliocentric and observer distance of the measurement.
     params : ModelParams
+    v_h_kms : float, optional
+        Heliocentric radial velocity [km/s], positive receding; sets the CO Swings factor.
 
     Returns
     -------
@@ -251,7 +277,7 @@ def spectrum_mjy(lam_um, Q: dict, r_h_au: float, delta_au: float,
     out = {"lam": lam, "total": np.zeros_like(lam)}
     for s in SPECIES:
         q = float(Q.get(s, 0.0) or 0.0)
-        amp = float(np.atleast_1d(amplitude_per_unit_Q(s, r_h_au, delta_au, params))[0])
+        amp = float(np.atleast_1d(amplitude_per_unit_Q(s, r_h_au, delta_au, params, v_h_kms))[0])
         comp = q * amp * species_shape_mjy(s, lam, params) * opacity_factor(s, q, r_h_au, params)
         out[s] = comp
         out["total"] = out["total"] + comp

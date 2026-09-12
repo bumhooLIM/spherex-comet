@@ -136,6 +136,79 @@ def test_h2o_falls_back_to_hot_bands_only_without_the_main_band():
     assert off.h2o_source == "none" and not off.covered[0]
 
 
+# ------------------------------------------------------------ fluorescence database wiring
+def test_fluorescence_templates_integrate_to_the_database_gfactors():
+    """The gfm species shape is the database g_lambda times the photon energy: its integral over a
+    band region must equal the sum of the tabulated band g-factors there, on any grid."""
+    from spherex_comspec import fluorescence as fl
+    bands = pd.read_csv(fl.FLUOR_DIR / "band_gfactors.csv")
+    for species, lo, hi in (("H2O", 2.5, 3.1), ("CO2", 4.1, 4.5), ("CO", 4.5, 5.0)):
+        ref = bands[(bands.species == species) & bands.lam_center_um.between(lo, hi)]["g_T070K"].sum()
+        assert abs(fl.band_total(species, lo, hi, 70.0) / ref - 1) < 0.03, species
+        for lam in (np.linspace(lo, hi, 300), lo * np.exp(np.arange(0, np.log(hi / lo), 1 / 4000))):
+            g = fl.g_lambda(species, lam, 70.0)
+            e = fl._edges(lam)
+            assert abs(np.sum(g * np.diff(e)) / ref - 1) < 0.03, (species, len(lam))
+    # T_rot interpolation is bounded by the neighbouring tables and exact on a grid point
+    lam = np.linspace(2.5, 3.1, 500)
+    g50, g60, g70 = (fl.g_lambda("H2O", lam, T) for T in (50.0, 60.0, 70.0))
+    assert np.all(g60 <= np.maximum(g50, g70) + 1e-30) and np.all(g60 >= np.minimum(g50, g70) - 1e-30)
+    assert np.allclose(fl.g_lambda("H2O", lam, 200.0), fl.g_lambda("H2O", lam, 130.0))
+
+
+def test_co_swings_factor_scales_only_the_co_column():
+    from spherex_comspec import fluorescence as fl
+    assert fl.swings_factor("CO", 0.0) == pytest.approx(1.0, abs=1e-6)
+    f20 = fl.swings_factor("CO", 20.0)
+    assert 1.15 < f20 < 1.45 and abs(fl.swings_factor("CO", -20.0) / f20 - 1) < 0.05
+    assert fl.swings_factor("CO", 200.0) == fl.swings_factor("CO", 60.0)      # clamped
+    assert fl.swings_factor("H2O", 20.0) == 1.0 and fl.swings_factor("CO", np.nan) == 1.0
+    assert np.allclose(fl.swings_factor("CO", np.array([0.0, np.nan])), [1.0, 1.0])
+    pts, p, _ = _synthetic_points()
+    pts["v_hel_kms"] = 0.0
+    A0, _ = build_design_matrix(pts, p, ("H2O", "CO2", "CO"), "physical")
+    pts["v_hel_kms"] = 20.0
+    A20, _ = build_design_matrix(pts, p, ("H2O", "CO2", "CO"), "physical")
+    assert np.allclose(A20[:, :2], A0[:, :2])
+    nz = A0[:, 2] > 0
+    assert np.allclose(A20[nz, 2] / A0[nz, 2], f20)
+    # the fit reports the factor and the velocity it used
+    pts["v_hel_kms"] = 20.0
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        fit = fit_production_rates(pts, p, FitConfig(drop_negative_sigma=None))
+    assert fit.geometry["v_hel_mean_kms"] == pytest.approx(20.0)
+    assert fit.geometry["swings_CO"] == pytest.approx(f20)
+    off = ModelParams(rho_ap_km=20000, co_swings=False)
+    Aoff, _ = build_design_matrix(pts, off, ("H2O", "CO2", "CO"), "physical")
+    assert np.allclose(Aoff, A0)
+
+
+def test_gaussian_legacy_model_still_runs_and_differs_from_gfm():
+    lam = np.linspace(2.5, 5.0, 800)
+    Q = {"H2O": 1e28, "CO2": 1e27, "CO": 1e26}
+    new = spectrum_mjy(lam, Q, 1.5, 1.0, ModelParams(rho_ap_km=20000))["total"]
+    old = spectrum_mjy(lam, Q, 1.5, 1.0, ModelParams(rho_ap_km=20000, profile_source="gaussian",
+                                                       co_swings=False))["total"]
+    assert np.all(np.isfinite(new)) and np.all(np.isfinite(old)) and new.max() > 0
+    # same physics, different band strengths and shapes: the integrals agree to ~15 %
+    assert abs(np.trapezoid(new, lam) / np.trapezoid(old, lam) - 1) < 0.25
+    with pytest.raises(ValueError):
+        spectrum_mjy(lam, Q, 1.5, 1.0, ModelParams(profile_source="psg"))
+
+
+def test_heliocentric_velocity_from_the_ephemeris():
+    from spherex_comspec.dataio import heliocentric_velocity, AU_KM_PER_DAY_TO_KMS
+    t = 2460000.0 + np.sort(np.concatenate([np.linspace(0, 3, 40), [0.5, 0.5, 1.7]]))
+    a, b = -0.0060, 0.00025                                   # au/day, au/day^2
+    r = 1.5 + a * (t - t[0]) + b * (t - t[0]) ** 2
+    v = heliocentric_velocity(np.round(t, 6), np.round(r, 6))
+    expected = (a + 2 * b * (t - t[0])) * AU_KM_PER_DAY_TO_KMS
+    assert np.all(np.isfinite(v)) and np.allclose(v, expected, atol=0.05)
+    assert np.all(np.isnan(heliocentric_velocity([2460000.0, 2460000.0], [1.5, 1.5])))
+    assert np.isnan(heliocentric_velocity([2460000.0], [1.5]))[0]
+
+
 def test_default_variants_are_well_formed():
     """The driver selects study partners by role, so the registry must have unique names,
     exactly one main variant, and that one must be MAIN_VARIANT."""

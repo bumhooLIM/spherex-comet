@@ -49,7 +49,8 @@ def _studies(names):
 
     Returns ``(main, flag_variants, raw, extra)``: the flag census compares ``main`` with
     the ``flags`` runs, the distance-correction study pairs it with the ``distcorr`` run,
-    and the ``badphot`` / ``previous`` runs join the census as extra comparisons.
+    and the ``badphot`` / ``previous`` / ``fluorescence`` runs join the census as extra
+    comparisons.
     """
     main_name = MAIN_VARIANT if MAIN_VARIANT in names else names[0]
 
@@ -58,7 +59,7 @@ def _studies(names):
 
     raw = role("distcorr")
     return main_name, [main_name] + role("flags"), (raw[0] if raw else None), \
-        role("badphot") + role("previous")
+        role("badphot") + role("previous") + role("fluorescence")
 
 
 def build_parser() -> argparse.ArgumentParser:

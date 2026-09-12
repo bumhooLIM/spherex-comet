@@ -454,7 +454,7 @@ def process_group(raw: pd.DataFrame, target: str, r_ap_km: float, phase: int, ep
             "flux", "err", "flux_raw", "err_raw", "distcorr_factor",
             "cont_mjy", "cont_err_mjy", "emis_mjy", "emis_err_mjy", "chi",
             "cont_raw_mjy", "emis_raw_mjy", "emis_raw_err_mjy",
-            "r_hel", "r_obs", "jd_utc", "detector", "sourceflag", "badphot", "frac_badpix_ap",
-            "n_gaia", "gmag_eff", "filename"]
+            "r_hel", "r_obs", "v_hel_kms", "jd_utc", "detector", "sourceflag", "badphot",
+            "frac_badpix_ap", "n_gaia", "gmag_eff", "filename"]
     pts = pts[[c for c in cols if c in pts.columns]]
     return dict(fits=fits, valid=vals, subs=subs, summary=summary, points=pts, raw=raw)

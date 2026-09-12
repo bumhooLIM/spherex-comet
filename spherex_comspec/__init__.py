@@ -10,6 +10,7 @@ to production rates of H2O, CO2 and CO:
 :mod:`dataio`         photometry reading, aperture choice, flag policy, all I/O
 :mod:`grouping`       28-day epochs -> single-state ``phase`` groups
 :mod:`continuum`      local polynomial continuum subtraction and validation
+:mod:`fluorescence`   reconstructed GSFC-style g-factor templates and the CO Swings factor
 :mod:`gasmodel`       Haser coma, Yamamoto filling factor, fluorescence (Layers 0-4)
 :mod:`instrument`     SPHEREx channel bandpass (Layer 5)
 :mod:`fitting`        design matrix, weighted linear solve, limits (Layer 6)
@@ -26,7 +27,7 @@ Quick start::
 
 from __future__ import annotations
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 from .config import (BANDS, BAND_WINDOWS, DEFAULT_VARIANTS, EMISSION_WINDOWS, KEY_RANGES,
                      MAIN_VARIANT, PLACEHOLDERS, SPECIES, VARIANTS, ApertureConfig,

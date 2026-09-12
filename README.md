@@ -38,7 +38,8 @@ spherex-comspec/
     ├── dataio.py              photometry reading, aperture choice, flag policy, all file I/O
     ├── grouping.py            28-day epochs -> single-state phase groups (dynamic programme)
     ├── continuum.py           local polynomial continuum, validation, subtraction
-    ├── gasmodel.py            Haser + Yamamoto + fluorescence  (Layers 0-4, unchanged)
+    ├── fluorescence.py        g-factor templates and the CO Swings factor from data/fluorescence
+    ├── gasmodel.py            Haser + Yamamoto + fluorescence  (Layers 0-4)
     ├── instrument.py          SPHEREx channel bandpass          (Layer 5, unchanged)
     ├── fitting.py             design matrix, weighted solve, limits, coverage (Layer 6)
     ├── pipeline.py            orchestration: run_grouping, run_variant
@@ -47,7 +48,10 @@ spherex-comspec/
 ```
 
 Nothing is installed; `main.py` and the tests put the package on `sys.path`.
-Requires the `spherex` conda environment (numpy, pandas, astropy, scipy, matplotlib).
+Requires the `spherex` conda environment (numpy, pandas, astropy, scipy, matplotlib) and the
+reconstructed fluorescence database in `../data/fluorescence/` (profiles and `co_swings.csv`,
+built by `../notebooks/fluorescence_gfm/build_fluorescence_db.py`; see
+`../doc/fluorescence_database.md`).
 
 ## Running
 
@@ -118,7 +122,26 @@ usable points or fewer than 2 inside the emission windows is skipped, not
 
 `F_ν(λ_i) = Σ_X Q_X A_iX` solved by weighted linear least squares on the
 `role == "emission"` channels of bands with an accepted verdict.  Each channel
-keeps its own r_h and Δ and its own bandpass.  Coverage is decided on the
+keeps its own r_h, Δ and heliocentric velocity v_h and its own bandpass.
+
+**Emission model (`fluorescence.py`, `gasmodel.py`; since 2026-09-11).**  The
+species templates come from the reconstructed GSFC-style fluorescence database
+(`data/fluorescence/profiles/`): every band a species emits between 0.7 and 5.0 µm,
+with its g-factor and its shape at `T_rot`, computed with the General Fluorescence
+Model of Villanueva et al. from HITRAN 2020 and a Kurucz × Fraunhofer-line solar
+spectrum, and validated line by line against the published GSFC values (~10 %).
+For H₂O this brings the 2.9–3.0 µm hot bands under the red wing of the 2.7 µm
+feature and the correct 4.63/4.85 µm hot-band strengths under CO; for CO₂ the ν₃
+hot bands.  **g(CO) depends on the heliocentric velocity** (the Swings effect: the
+cometary CO lines coincide with the solar CO Fraunhofer lines at v_h = 0, so g(CO)
+is 1.92 × 10⁻⁴ s⁻¹ at rest and 25–31 % larger for |v_h| ≳ 10 km/s).  The velocity
+of every pointing is `d r_h/dt` from the ephemeris `r_hel(t)` of the photometry
+(`dataio.heliocentric_velocity`; agrees with JPL Horizons rates to 0.002 km/s typically and 0.05 km/s at worst), it
+travels with the channels into the fit, and `fluorescence.swings_factor` scales the
+CO column of the design matrix channel by channel.  `gas_fit.csv` reports
+`v_hel_mean_kms` and the mean factor `swings_CO`.  `ModelParams(profile_source=
+"gaussian", co_swings=False)` restores the previous model (eight Gaussian bands with
+the Ootsubo et al. 2012 g-factors); the `dc_main_gauss` variant runs it.  Coverage is decided on the
 diagnostic `KEY_RANGES` (H₂O ≥ 3 channels in 2.60–2.80 µm, CO₂ ≥ 2 in
 4.20–4.30, CO ≥ 2 in 4.60–4.70) — *not covered* is categorically different from
 *not detected*.  `n_eff` (the participation ratio of the per-channel Fisher
@@ -132,7 +155,8 @@ such as 10P and 24P lose those channels to saturation and flags — do the 4.63 
 4.55–4.90 µm, at least one beyond 4.75 µm so the value is separable from CO).  The
 row then carries `h2o_source = "hot"`, the caveat says so, and the figures draw it
 with an open marker; `FitConfig.h2o_hot_fallback=False` switches the rule off.
-Hot-band g-factors are placeholders, so such values are provisional.
+The hot bands carry ~3 % of the water emission (4.63 µm 6.6 × 10⁻⁶, 4.85 µm
+4.4 × 10⁻⁶ s⁻¹ against 3.1 × 10⁻⁴ for ν₃), so such values are provisional.
 
 **Errors.**  The fit uses `source_sum_err_empirical_mjy` (`Variant.error_column`,
 placeholder 10 applied): the formal error under-reports the annulus scatter.
@@ -173,6 +197,7 @@ the groups detected in both spaces; 0.48 for the 2026-09-08 baseline).
 | `raw_main` | distcorr | baseline | physical | distance-correction study |
 | `dc_main_strict` | badphot | baseline but any bad pixel drops the row | distance-corrected | badphot-policy study |
 | `dc_all` | previous | strict `badphot`, every flag kept (the 2026-09-08 baseline) | distance-corrected | before/after the placeholder switch |
+| `dc_main_gauss` | fluorescence | baseline | distance-corrected | the emission model before 2026-09-11 (Gaussian bands, Ootsubo g-factors, constant g(CO)): what the fluorescence database changes |
 
 Each variant is a complete, independent run under `data/emission/`, `results/` and `fig/` for the main variant and under
 `studies/<variant>/` for every other one.  A variant's `hash`
@@ -180,7 +205,7 @@ Each variant is a complete, independent run under `data/emission/`, `results/` a
 maps each name to its `Variant`, so a script drives one directly:
 `run_variant(VARIANTS["dc_main"])`, `save_variant_figures(VARIANTS["dc_main_strict"], assignment)`.
 The driver picks each study's partners by `Variant.role` (`main`, `flags`, `distcorr`,
-`badphot`, `previous`), so a new variant only needs a row in `DEFAULT_VARIANTS`.
+`badphot`, `previous`, `fluorescence`), so a new variant only needs a row in `DEFAULT_VARIANTS`.
 
 ## Outputs
 
@@ -213,6 +238,7 @@ scientific notation.
 | `h2o_source`, `h2o_anchored` | `main`: Q(H₂O) rests on the 2.7 µm band; `hot`: on the 4.6–4.9 µm hot bands only (2.7 µm not covered; provisional, open markers in the figures); `none`: not covered |
 | `CO2_H2O`, `CO_H2O` (+ `_err`) | mixing ratios with the covariance term |
 | `fit_space`, `distcorr_factor_mean` | the space of the solve (always physical) and the group's mean factor |
+| `v_hel_mean_kms`, `swings_CO` | mean heliocentric radial velocity of the fitted channels (positive receding) and the mean CO Swings factor g(v_h)/g(0) applied |
 | `n_flag_a`, `n_flag_b` | flagged channels that entered the fit |
 | `caveats` | the interpretive warnings, joined by `;` |
 
@@ -220,7 +246,8 @@ scientific notation.
 
 `config.PLACEHOLDERS` lists, in priority order, every value that is a stand-in
 or an unattributed convention rather than a measurement — the SPHEREx LSF,
-the band profiles, the expansion-velocity law, the 2.7 µm blue edge, the
+the fluorescence database and the CO Swings factor (applied 2026-09-11),
+the expansion-velocity law, the 2.7 µm blue edge, the
 `badphot` policy (applied on 2026-09-09 as `BASELINE_FLAGS`), the aperture rule,
 the polynomial orders, the 1σ detection
 tier, the negative-channel cut, the error column, the grouping thresholds, the
@@ -236,6 +263,10 @@ python tests/test_comspec.py
 
 Filling-factor limits and linearity in Q; the grouping DP on synthetic
 sequences; Q identical in physical and corrected space on a synthetic spectrum;
-and, when the data are present, reproduction of the old `phase_update_map.csv`
-for four targets, the aperture promotion of 2014 UN271, the nesting of the flag
-policies, and the round trip of every saved continuum from its own columns.
+the fluorescence templates integrating to the database band g-factors on any grid
+and bounded in T_rot; the CO Swings factor scaling only the CO column of the design
+matrix and being reported by the fit; the legacy Gaussian model still running; the
+heliocentric velocity recovered from a synthetic ephemeris; and, when the data are
+present, reproduction of the old `phase_update_map.csv` for four targets, the
+aperture promotion of 2014 UN271, the nesting of the flag policies, and the round
+trip of every saved continuum from its own columns (16 tests, `pytest` or plain).

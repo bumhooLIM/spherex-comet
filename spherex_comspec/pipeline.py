@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 import time
 import warnings
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence
 
@@ -179,11 +179,7 @@ def run_variant(variant: Variant, targets: Optional[Sequence[str]] = None,
     if len(cont):
         catalog = _catalog_from(cont)
         for i, r in enumerate(catalog.itertuples(index=False), start=1):
-            params = ModelParams(rho_ap_km=float(r.r_ap_km), v_g_kms=variant.model.v_g_kms,
-                                 T_rot=variant.model.T_rot, opacity_mode=variant.model.opacity_mode,
-                                 lam_min_um=variant.model.lam_min_um,
-                                 lam_max_um=variant.model.lam_max_um,
-                                 resolving_power=variant.model.resolving_power)
+            params = replace(variant.model, rho_ap_km=float(r.r_ap_km))
             try:
                 pts = load_fit_input(variant.name, r.target, r.r_ap_km, int(r.phase), variant.fit) \
                     if write else _fit_input_from(cont, r, variant.fit)

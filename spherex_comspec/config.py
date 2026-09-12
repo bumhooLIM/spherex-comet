@@ -60,9 +60,18 @@ SOURCEFLAG_PRIORITY = ("a", "b", "c", "d", "0")
 
 
 # ------------------------------------------------------------------------------- band table
+#: The main model (``ModelParams.profile_source = "gfm"``) takes every band's g-factor *and*
+#: shape from the reconstructed fluorescence database (``data/fluorescence``, see
+#: ``doc/fluorescence_database.md``).  This table is the previous representation -- eight
+#: Gaussian bands with the Ootsubo et al. (2012, Table 2) g-factors -- kept for the
+#: ``profile_source = "gaussian"`` study variant and for ``KAPPA_PUMP``.  For reference, the
+#: database gives at 70 K and 1 au (photons s^-1 molecule^-1): H2O nu3 3.14e-4, nu1 2.9e-5,
+#: nu2+nu3-nu2 2.85e-5, nu1+nu3-nu1 1.9e-5, nu3-nu2 6.6e-6, nu1-nu2 4.4e-6 (plus ~1e-5 in the
+#: 2.8-3.0 um hot bands); CO2 nu3 2.71e-3 (+1.0e-4 in hot bands); CO v(1-0) 1.92e-4 at v_h = 0
+#: rising to 2.4-2.5e-4 for |v_h| > 10 km/s (the Swings effect, ``co_swings.csv``).
 @dataclass(frozen=True)
 class Band:
-    """One vibrational emission band (Ootsubo et al. 2012, Table 2)."""
+    """One vibrational emission band (Ootsubo et al. 2012, Table 2) of the *legacy* Gaussian model."""
 
     species: str
     label: str
@@ -108,8 +117,10 @@ KEY_RANGES = {
 #: channels of bright, close comets such as 10P and 24P): the nu3-nu2 (4.63 um) and nu1-nu2
 #: (4.85 um) hot bands.  ``min_points`` channels inside ``lo``-``hi`` and ``min_points_red``
 #: of them beyond ``red_lo`` -- the 4.85 um band lies outside CO v(1-0), and that is what
-#: keeps a hot-band Q(H2O) separable from Q(CO).  Hot-band g-factors are placeholders
-#: (priority 2), so such a value is provisional and carries ``h2o_source = "hot"``.
+#: keeps a hot-band Q(H2O) separable from Q(CO).  The hot-band g-factors come from the
+#: reconstructed database (line-level validation to 10 %; the 4.85 um band is 40 % weaker than
+#: the earlier harmonic estimate), but such a value rests on ~3 % of the water emission and
+#: carries ``h2o_source = "hot"``.
 H2O_HOT_RANGE = dict(lo=4.55, hi=4.90, min_points=3, red_lo=4.75, min_points_red=1)
 
 BAND_CARRIER = {
@@ -236,6 +247,14 @@ class ModelParams:
     lam_min_um: float = 2.0
     lam_max_um: float = 5.2
     resolving_power: int = 4000
+    #: ``"gfm"``: species templates (g-factors and band shapes at ``T_rot``) from the reconstructed
+    #: fluorescence database ``data/fluorescence`` (:mod:`fluorescence`); ``"gaussian"``: the
+    #: previous eight Gaussian bands of :data:`BANDS`.
+    profile_source: str = "gfm"
+    #: scale g(CO) with the comet's heliocentric velocity (Swings effect; ``co_swings.csv``)
+    co_swings: bool = True
+    #: label of the database build the templates come from, so it is part of the variant hash
+    fluorescence_db: str = "gfm-2026-09-11"
 
     def v_g(self, r_h_au):
         import numpy as np
@@ -284,10 +303,10 @@ class Variant:
     continuum: ContinuumConfig = field(default_factory=ContinuumConfig)
     fit: FitConfig = field(default_factory=FitConfig)
     model: ModelParams = field(default_factory=ModelParams)
-    #: What the run is for.  ``main`` is the catalog result; ``flags``, ``distcorr`` and
-    #: ``badphot`` are its study partners; ``previous`` is an earlier baseline kept for a
-    #: before/after comparison.  The driver selects study partners by role, so a new
-    #: variant needs no change anywhere else.
+    #: What the run is for.  ``main`` is the catalog result; ``flags``, ``distcorr``,
+    #: ``badphot`` and ``fluorescence`` are its study partners; ``previous`` is an earlier
+    #: baseline kept for a before/after comparison.  The driver selects study partners by
+    #: role, so a new variant needs no change anywhere else.
     role: str = "study"
 
     @property
@@ -335,6 +354,11 @@ DEFAULT_VARIANTS: Tuple[Variant, ...] = (
     Variant("dc_main_strict", FlagPolicy("strict_no_a", drop_flags=("a",)),
             use_distcorr=True, role="badphot"),
     Variant("dc_all",         FlagPolicy("all"), use_distcorr=True, role="previous"),
+    # the emission model before 2026-09-11: Gaussian bands with the Ootsubo g-factors and a
+    # velocity-independent g(CO); paired with the main run it isolates what the reconstructed
+    # fluorescence database changes
+    Variant("dc_main_gauss",  BASELINE_FLAGS, use_distcorr=True,
+            model=ModelParams(profile_source="gaussian", co_swings=False), role="fluorescence"),
 )
 #: The variant whose products are the catalog's main result.
 MAIN_VARIANT = "dc_main"
@@ -352,11 +376,21 @@ PLACEHOLDERS: Tuple[dict, ...] = (
          role="channel bandpass used to band-average the model; the CO / H2O-hot-band "
               "separability at 4.7 um depends on its wings, not only its width",
          update="as-built LVF R(lambda) and LSF from the SPHEREx instrument model"),
-    dict(priority=2, quantity="band profiles Phi_b (8 bands)",
-         value="Gaussian, FWHM 0.020-0.100 um (config.BANDS)",
-         role="intrinsic band envelope; unit-normalised, so band-integrated flux and Q are "
-              "unaffected at SPHEREx resolution, but any statement about band *shape* is not",
-         update="PSG / GSFC Fluorescence Database templates at T_rot, unit area"),
+    dict(priority=2, quantity="fluorescence g-factors and band profiles",
+         value="reconstructed GSFC-style database at T_rot (data/fluorescence; applied 2026-09-11; "
+               "was: 8 Gaussian bands with the Ootsubo et al. 2012 g-factors)",
+         role="every band's strength and shape, including the 4.6-4.9 um H2O hot bands under CO; "
+              "validated line by line to ~10 % against the published GSFC values",
+         update="applied; residual: HITRAN hot-band completeness and the T_rot dependence of "
+                "the hot-band ratios (doc/fluorescence_database.md section 5)"),
+    dict(priority=2, quantity="g(CO) versus heliocentric velocity (Swings effect)",
+         value="ratio g(v_h)/g(0) from data/fluorescence/co_swings.csv interpolated in T_rot, with "
+               "v_h = d r_h/dt from the ephemeris r_hel(t) of each target's exposures "
+               "(dataio.heliocentric_velocity)",
+         role="g(CO) is 25 % lower at v_h = 0 than for |v_h| > 10 km/s; a constant g(CO) under-"
+              "estimated Q(CO) near perihelion by that much",
+         update="JPL Horizons radial rates per exposure if the finite-difference velocity is ever "
+                "in doubt; the ratio depends on T_rot by up to 4 % at 2-10 km/s"),
     dict(priority=3, quantity="expansion-velocity law",
          value="v_g = 0.8 r_h^-0.5 km/s (ModelParams.v_g)",
          role="fixed, not fitted (F ~ Q/v_g is exactly degenerate); the largest single "
@@ -410,8 +444,9 @@ PLACEHOLDERS: Tuple[dict, ...] = (
          update="Debout et al. (2016) for rho_tau; PSG pump-line intensities for kappa"),
     dict(priority=14, quantity="rotational temperature",
          value="T_rot = 70 K (ModelParams)",
-         role="reaches only the band profile, which is unresolved at R <= 130",
-         update="irrelevant until real band templates exist"),
+         role="selects the database template (line intensities within a band); the "
+              "band-integrated g-factors change by < 3 % over 30-130 K, so Q is insensitive",
+         update="a per-comet value from the literature, or leave fixed"),
     dict(priority=15, quantity="source-flag thresholds (upstream)",
          value="flag a: G_eff < 13 within r_ap + 2 FWHM; flag b: Gaia flux > 0.2 x comet flux "
                "within r_ap + FWHM (spherex_apphot.Config)",

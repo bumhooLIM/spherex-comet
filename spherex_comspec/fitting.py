@@ -41,7 +41,7 @@ import numpy as np
 import pandas as pd
 
 from .config import H2O_HOT_RANGE, KEY_RANGES, SPECIES, FitConfig, ModelParams
-from .gasmodel import amplitude_per_unit_Q, hires_grid, species_shape_mjy, spectrum_mjy
+from .gasmodel import amplitude_per_unit_Q, hires_grid, species_shape_mjy, spectrum_mjy, swings_factor
 from .instrument import bandpass_matrix
 
 __all__ = ["build_design_matrix", "fit_production_rates", "FitResult", "model_curves",
@@ -80,6 +80,13 @@ def channel_masks(points: pd.DataFrame, cfg: "FitConfig | None" = None,
                 clipped=clipped, nonfinite=~finite)
 
 
+def _velocities(points: pd.DataFrame) -> np.ndarray:
+    """Heliocentric radial velocity per channel [km/s]; NaN (-> Swings factor 1) when absent."""
+    if "v_hel_kms" in points:
+        return points["v_hel_kms"].to_numpy(dtype=float)
+    return np.full(len(points), np.nan)
+
+
 def key_range_counts(points: pd.DataFrame) -> dict:
     wl = points["wl"].to_numpy(dtype=float) if len(points) else np.empty(0)
     return {s: int(((wl >= r["lo"]) & (wl <= r["hi"])).sum()) for s, r in KEY_RANGES.items()}
@@ -99,10 +106,11 @@ def build_design_matrix(points: pd.DataFrame, params: ModelParams,
     W = bandpass_matrix(lam_hi, points["wl"].to_numpy(), points["wlwidth"].to_numpy())
     r_h = points["r_hel"].to_numpy(dtype=float)
     delta = points["r_obs"].to_numpy(dtype=float)
+    v_h = _velocities(points)
     A = np.zeros((len(points), len(species)))
     for k, s in enumerate(species):
         shape = species_shape_mjy(s, lam_hi, params)
-        A[:, k] = amplitude_per_unit_Q(s, r_h, delta, params) * (W @ shape)
+        A[:, k] = amplitude_per_unit_Q(s, r_h, delta, params, v_h) * (W @ shape)
     if space == "distcorr":
         A = A * points["distcorr_factor"].to_numpy(dtype=float)[:, None]
     return A, lam_hi
@@ -155,8 +163,13 @@ class FitResult:
         out = []
         if self.h2o_source == "hot":
             out.append(f"Q(H2O) from the 4.6-4.9 um hot bands only ({self.n_hot_H2O} channels; 2.7 um "
-                       "not covered): provisional -- hot-band g-factors are placeholders and the "
-                       "feature is shared with CO v(1-0)")
+                       "not covered): provisional -- the hot bands carry ~3 % of the water emission "
+                       "and the feature is shared with CO v(1-0)")
+        if ("CO" in self.species and self.covered[self.species.index("CO")]
+                and self.params is not None and self.params.co_swings
+                and not np.isfinite(self.geometry.get("v_hel_mean_kms", np.nan))):
+            out.append("Q(CO) without the Swings factor: heliocentric velocity unknown, the "
+                       "v_h = 0 g-factor was used (up to 25 % too small if |v_h| > 10 km/s)")
         for k, s in enumerate(self.species):
             if not self.covered[k]:
                 r = KEY_RANGES.get(s)
@@ -370,6 +383,9 @@ def fit_production_rates(points: pd.DataFrame, params: ModelParams,
         v_g_kms=float(np.atleast_1d(params.v_g(np.mean(pts["r_hel"])))[0]) if len(pts) else np.nan,
         jd_utc_mean=float(np.mean(pts["jd_utc"])) if "jd_utc" in pts and len(pts) else np.nan,
     )
+    v_h = _velocities(pts)
+    geom["v_hel_mean_kms"] = float(np.nanmean(v_h)) if np.isfinite(v_h).any() else np.nan
+    geom["swings_CO"] = float(np.mean(np.atleast_1d(swings_factor("CO", v_h, params)))) if len(v_h) else np.nan
     return FitResult(
         target=str(points["target"].iloc[0]) if len(points) else "",
         r_ap_km=float(points["r_ap_km"].iloc[0]) if len(points) else np.nan,
@@ -389,8 +405,10 @@ def model_curves(fit: FitResult, points: pd.DataFrame, params: ModelParams,
     Q = {s: (0.0 if not np.isfinite(v) else v) for s, v in fit.Q_dict().items()}
     r_h = float(np.median(points["r_hel"])) if len(points) else np.nan
     delta = float(np.median(points["r_obs"])) if len(points) else np.nan
+    v_all = _velocities(points)
+    v_h = float(np.nanmedian(v_all)) if np.isfinite(v_all).any() else np.nan
     lam = np.linspace(params.lam_min_um, params.lam_max_um, n_lam)
-    comp = spectrum_mjy(lam, Q, r_h, delta, params)
+    comp = spectrum_mjy(lam, Q, r_h, delta, params, v_h)
     o = np.argsort(points["wl"].to_numpy())
     wl_o = points["wl"].to_numpy()[o]
     ww_o = points["wlwidth"].to_numpy()[o]
@@ -398,10 +416,10 @@ def model_curves(fit: FitResult, points: pd.DataFrame, params: ModelParams,
     convolved = np.full_like(lam, np.nan)
     if width is not None:
         lam_hi = hires_grid(params)
-        hi = spectrum_mjy(lam_hi, Q, r_h, delta, params)["total"]
+        hi = spectrum_mjy(lam_hi, Q, r_h, delta, params, v_h)["total"]
         convolved = bandpass_matrix(lam_hi, lam, width) @ hi
     A, _ = build_design_matrix(points, params, fit.species, "physical")
     at_points = A @ np.nan_to_num(fit.Q)
     return dict(lam=lam, intrinsic=comp["total"], convolved=convolved,
                 per_species={s: comp[s] for s in fit.species},
-                at_points=at_points, r_hel_repr=r_h, r_obs_repr=delta)
+                at_points=at_points, r_hel_repr=r_h, r_obs_repr=delta, v_hel_repr=v_h)
