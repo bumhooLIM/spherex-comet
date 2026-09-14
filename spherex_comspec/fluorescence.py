@@ -29,6 +29,7 @@ Positive v_h is motion away from the Sun (post-perihelion).
 from __future__ import annotations
 
 import json
+import os
 from functools import lru_cache
 from pathlib import Path
 
@@ -40,7 +41,9 @@ from . import directory as _dir
 __all__ = ["FLUOR_DIR", "SWINGS_SPECIES", "available", "describe", "g_lambda", "swings_factor",
            "band_total", "rebin_density", "profile_temperatures"]
 
-FLUOR_DIR: Path = _dir.DATA_DIR / "fluorescence"
+#: the database lives with the project, not with a run's (overridable) data tree
+FLUOR_DIR: Path = Path(os.environ["COMSPEC_FLUOR_DIR"]).expanduser() if os.environ.get("COMSPEC_FLUOR_DIR") \
+    else _dir.ROOT / "data" / "fluorescence"
 #: species whose g-factor is scaled with heliocentric velocity
 SWINGS_SPECIES = ("CO",)
 

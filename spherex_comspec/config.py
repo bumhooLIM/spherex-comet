@@ -98,9 +98,12 @@ BANDS: Tuple[Band, ...] = (
 
 #: Emission and continuum windows per band [um], as in ``continuum_subtraction.ipynb``.
 #: ``em`` is punched out of *every* continuum fit; ``cont`` bounds the sample for this band.
+#: 2026-09-12: the 2.7 um emission window starts at 2.50 um (the H2O complex begins at 2.55 um;
+#: 2.60 um lost 6.7 % of it) and the H2O and CO2 continuum windows are 0.1 um wider on both
+#: sides; the 4.3 um continuum reaches into the CO emission window, which is punched out anyway.
 BAND_WINDOWS: Dict[str, dict] = {
-    "2.7um": dict(em=(2.60, 2.80), cont=(2.30, 3.00), lam_c=2.70),
-    "4.3um": dict(em=(4.18, 4.35), cont=(4.00, 4.55), lam_c=4.26),
+    "2.7um": dict(em=(2.50, 2.80), cont=(2.20, 3.10), lam_c=2.70),
+    "4.3um": dict(em=(4.18, 4.35), cont=(3.90, 4.65), lam_c=4.26),
     "4.7um": dict(em=(4.55, 4.90), cont=(4.40, 5.00), lam_c=4.67),
 }
 EMISSION_WINDOWS = {b: w["em"] for b, w in BAND_WINDOWS.items()}
@@ -109,7 +112,7 @@ ALL_EM_WINDOWS = [w["em"] for w in BAND_WINDOWS.values()]
 #: Diagnostic ranges that must be sampled before a species may be fitted at all.
 #: Falling short is a *coverage* failure, categorically different from a non-detection.
 KEY_RANGES = {
-    "H2O": dict(lo=2.60, hi=2.80, min_points=3),
+    "H2O": dict(lo=2.50, hi=2.80, min_points=3),
     "CO2": dict(lo=4.20, hi=4.30, min_points=2),
     "CO":  dict(lo=4.60, hi=4.70, min_points=2),
 }
@@ -121,7 +124,9 @@ KEY_RANGES = {
 #: reconstructed database (line-level validation to 10 %; the 4.85 um band is 40 % weaker than
 #: the earlier harmonic estimate), but such a value rests on ~3 % of the water emission and
 #: carries ``h2o_source = "hot"``.
-H2O_HOT_RANGE = dict(lo=4.55, hi=4.90, min_points=3, red_lo=4.75, min_points_red=1)
+#: ``max_rh_au`` (2026-09-12): beyond 3 au the hot-band values were all 1-2 sigma with errors
+#: comparable to the value, so the fallback is not offered there (``FitConfig.h2o_hot_max_rh_au``).
+H2O_HOT_RANGE = dict(lo=4.55, hi=4.90, min_points=3, red_lo=4.75, min_points_red=1, max_rh_au=3.0)
 
 BAND_CARRIER = {
     "2.7um": r"H$_2$O $\nu_3+\nu_1$+hot",
@@ -145,7 +150,9 @@ class GroupingConfig:
 
     Reproduces ``notebooks/phase_group_update.ipynb``.  In priority order:
 
-    1. **r_h range (hard).**  ``(max - min) / mean < rh_tol`` inside every group.
+    1. **r_h range (hard).**  ``(max - min) / mean < rh_tol`` inside every group;
+       and, since 2026-09-12, ``(max - min) / mean < delta_tol`` for the observer
+       distance (rule 1b), which also subdivides the manual r_h bins.
     2. **Perihelion (hard).**  Inbound and outbound epochs never share a group;
        applied only where the turn is resolved by more than ``arc_min_drh`` on
        both sides, so ephemeris round-off cannot trigger it.
@@ -157,6 +164,11 @@ class GroupingConfig:
     """
 
     rh_tol: float = 0.10
+    #: rule 1b (2026-09-12): ``(max - min) / mean`` of the observer distance inside every
+    #: automatic group, and inside every manual r_h bin; None disables it.  Delta is not
+    #: what the model integrates, but a group is one observing state only if it is bounded
+    #: too (r_h^2 Delta^2 spread reached 183 % before).  0.20 splits 20 of 174 groups.
+    delta_tol: Optional[float] = 0.20
     arc_min_drh: float = 0.001          # au
     arc_min_epoch: int = 2
     link_drh: float = 0.05              # au
@@ -188,6 +200,19 @@ class ApertureConfig:
     far_km: float = 40000.0
     min_coverage: float = 0.95
     kind: str = "km"
+    #: ``"snr"`` (2026-09-12): among the ``km`` apertures present for ``min_coverage`` of the
+    #: exposures, at least ``min_psf_mult`` PSF FWHM wide and no larger than
+    #: ``max_ap_frac_annulus`` of the sky annulus' inner radius (so the annulus stays outside
+    #: the coma the aperture measures), take the smallest one whose median S/N over the
+    #: star-free emission-window channels is within ``snr_tol`` of the best.  ``"rh"``: the previous
+    #: rule, ``near_km`` inside ``rh_split_au`` and ``far_km`` beyond, promoted for coverage.
+    rule: str = "snr"
+    snr_tol: float = 0.10
+    min_psf_mult: float = 2.0
+    max_ap_frac_annulus: float = 1.0 / 3.0
+    #: star-free (flag 0) emission-window channels an aperture needs before its S/N is trusted;
+    #: with fewer at every aperture the smallest bounded aperture is taken (crowded field)
+    min_clean_channels: int = 5
 
 
 @dataclass(frozen=True)
@@ -221,7 +246,19 @@ class FlagPolicy:
 class ContinuumConfig:
     """Local polynomial continuum subtraction (``continuum_subtraction.ipynb``)."""
 
-    poly_orders: Dict[str, int] = field(default_factory=lambda: {"2.7um": 3, "4.3um": 2, "4.7um": 2})
+    #: maximum (``order_mode="cv"``) or requested (``"fixed"``) polynomial order per band
+    poly_orders: Dict[str, int] = field(default_factory=lambda: {"2.7um": 3, "4.3um": 3, "4.7um": 3})
+    #: ``"cv"`` (2026-09-12): the order of every bracketed fit is the lowest one whose
+    #: cross-validated RMSE is within ``cv_select_margin`` of the best among 1..max; the
+    #: previous fixed 3 / 2 / 2 orders were contradicted by the CV in half of the fits.  The
+    #: 10 % margin is the parsimony rule: a higher order must buy a real reduction of the
+    #: leave-one-out error, not the ~5 % that noise alone produces with ~20 points.
+    order_mode: str = "cv"
+    cv_select_margin: float = 0.10
+    #: when the continuum window has points on one side of the band only, extend the empty
+    #: side to this distance from the emission edge (still punching out every emission
+    #: window) before fitting; None keeps the window as configured (2026-09-12).
+    one_sided_extend_um: Optional[float] = 1.0
     sigma: float = 3.0
     maxiters: int = 5
     n_min_poly: int = 6              # below this many continuum points -> 2-point fallback
@@ -268,11 +305,24 @@ class FitConfig:
     """Options of the weighted linear least-squares solve."""
 
     scale_errors_by_chi2: bool = True
-    upper_limit_sigma: float = 1.0
-    drop_negative_sigma: Optional[float] = 1.0
+    #: detection tiers (2026-09-12): ``detected`` at >= detection_sigma, ``marginal`` between
+    #: marginal_sigma and detection_sigma (value reported, limit quoted), ``upper_limit`` below;
+    #: limits are ``Q_fit + upper_limit_sigma * err``
+    detection_sigma: float = 3.0
+    marginal_sigma: float = 1.0
+    upper_limit_sigma: float = 3.0
+    #: one-sided cut of channels below -k sigma; None (2026-09-12) keeps every channel, since the
+    #: cut biased Q upward by ~0.3 sigma per channel and could empty a group
+    drop_negative_sigma: Optional[float] = None
     require_key_coverage: bool = True
     #: use the 4.6-4.9 um hot bands for Q(H2O) when, and only when, 2.7 um is not covered
     h2o_hot_fallback: bool = True
+    #: ... and only inside this heliocentric distance (None: no cap)
+    h2o_hot_max_rh_au: Optional[float] = 3.0
+    #: generalised least squares (2026-09-12): the continuum-model uncertainty is correlated
+    #: across the channels of a band through the polynomial coefficients; their saved
+    #: covariance builds the full data covariance.  False: diagonal errors as before.
+    gls: bool = True
     bands: Optional[Tuple[str, ...]] = None
     accept_verdicts: Tuple[str, ...] = ("PASS", "WARN")
     clip_sigma: Optional[float] = None
@@ -304,8 +354,8 @@ class Variant:
     fit: FitConfig = field(default_factory=FitConfig)
     model: ModelParams = field(default_factory=ModelParams)
     #: What the run is for.  ``main`` is the catalog result; ``flags``, ``distcorr``,
-    #: ``badphot`` and ``fluorescence`` are its study partners; ``previous`` is an earlier
-    #: baseline kept for a before/after comparison.  The driver selects study partners by
+    #: ``badphot``, ``fluorescence``, ``errors`` and ``rules`` are its study partners;
+    #: ``previous`` is an earlier baseline kept for a before/after comparison.  The driver selects study partners by
     #: role, so a new variant needs no change anywhere else.
     role: str = "study"
 
@@ -359,6 +409,18 @@ DEFAULT_VARIANTS: Tuple[Variant, ...] = (
     # fluorescence database changes
     Variant("dc_main_gauss",  BASELINE_FLAGS, use_distcorr=True,
             model=ModelParams(profile_source="gaussian", co_swings=False), role="fluorescence"),
+    # 2026-09-12: the fit with diagonal errors (no continuum covariance) -- what GLS changes
+    Variant("dc_main_diag",   BASELINE_FLAGS, use_distcorr=True, fit=FitConfig(gls=False), role="errors"),
+    # 2026-09-12: every rule of the 2026-09-11 run that a variant can carry -- r_h-based aperture,
+    # fixed 3/2/2 orders without the one-sided extension, the 1 sigma negative cut and detection
+    # tier, diagonal errors, no hot-band distance cap.  Windows and grouping are shared.
+    Variant("dc_rules_previous", BASELINE_FLAGS, use_distcorr=True,
+            aperture=ApertureConfig(rule="rh"),
+            continuum=ContinuumConfig(poly_orders={"2.7um": 3, "4.3um": 2, "4.7um": 2},
+                                      order_mode="fixed", one_sided_extend_um=None),
+            fit=FitConfig(detection_sigma=1.0, upper_limit_sigma=1.0, drop_negative_sigma=1.0,
+                          h2o_hot_max_rh_au=None, gls=False),
+            role="rules"),
 )
 #: The variant whose products are the catalog's main result.
 MAIN_VARIANT = "dc_main"
@@ -396,11 +458,13 @@ PLACEHOLDERS: Tuple[dict, ...] = (
          role="fixed, not fitted (F ~ Q/v_g is exactly degenerate); the largest single "
               "systematic in absolute Q, ~ +/-18 % per 20 % in v_g for CO2",
          update="species-specific velocity from a literature compilation, with its citation"),
-    dict(priority=4, quantity="2.7 um emission window blue edge",
-         value="2.60 um (config.BAND_WINDOWS)",
-         role="loses 6.7 % of the convolved H2O complex and leaves a cont_used channel at 2.59 um "
-              "carrying 23 % of the peak; the project handoff recommends 2.50 um",
-         update="2.50 um after re-checking one-sided continuum rates (14 groups go one-sided)"),
+    dict(priority=4, quantity="2.7 um emission window and continuum windows",
+         value="emission 2.50-2.80 um, continuum 2.20-3.10 (H2O) and 3.90-4.65 um (CO2); an empty "
+               "continuum side is extended to 1 um from the band edge (applied 2026-09-12; was: "
+               "2.60 um edge, 2.30-3.00 and 4.00-4.55 um, no extension)",
+         role="the H2O template starts at 2.55 um; wider windows and the extension cut the "
+              "one-sided FAIL rate",
+         update="applied; re-examine the extension's linear extrapolation over up to 1 um"),
     dict(priority=5, quantity="badphot policy",
          value="drop rows with frac_badpix_ap > 0.05 (FlagPolicy.max_frac_badpix; applied 2026-09-09, "
                "was: any aperture containing a bad pixel)",
@@ -408,27 +472,32 @@ PLACEHOLDERS: Tuple[dict, ...] = (
               "~50 % of rows.  frac_badpix_ap is in the data for a threshold instead",
          update="applied; re-examine the 0.05 threshold once the flux loss per bad pixel is characterised"),
     dict(priority=6, quantity="aperture rule",
-         value="20 000 km inside 3 au, 40 000 km beyond; promoted to the smallest valid "
-               "km aperture with >= 95 % coverage (ApertureConfig)",
-         role="sets the coma column the model integrates; a target's Q are aperture-consistent "
-              "only because one radius is used per target",
-         update="an S/N-driven choice per target, or a fixed angular aperture"),
+         value="S/N-driven per target: the smallest km aperture (>= 95 % coverage, >= 2 PSF FWHM, "
+               "<= 1/3 of the sky-annulus inner radius) within 10 % of the best median emission-window "
+               "S/N (ApertureConfig.rule = 'snr'; applied 2026-09-12; was: 20 000 / 40 000 km by r_h)",
+         role="sets the coma column the model integrates; the annulus bound keeps the background "
+              "outside the coma being measured",
+         update="applied; the dc_rules_previous variant keeps the r_h rule"),
     dict(priority=7, quantity="continuum polynomial orders",
-         value="{2.7um: 3, 4.3um: 2, 4.7um: 2} (ContinuumConfig.poly_orders)",
-         role="83 of 144 WARN verdicts in the previous run were only CV preferring another order",
-         update="re-tune from the cv_best_order column of the emission summaries"),
+         value="chosen per fit by leave-one-out cross-validation up to order 3, lowest order within "
+               "5 % of the best (ContinuumConfig.order_mode = 'cv'; applied 2026-09-12; was: fixed 3/2/2)",
+         role="the CV preferred order 1 in half of the fits of the previous run",
+         update="applied"),
     dict(priority=8, quantity="detection threshold",
-         value="upper_limit_sigma = 1.0 (FitConfig)",
-         role="'detected' currently means >= 1 sigma; it gates entry into the mixing ratios",
-         update="3 sigma, or rename the tier -- see doc/fitting_methodology.md section 10.2b"),
+         value="detected >= 3 sigma, marginal 1-3 sigma, limits at 3 sigma (FitConfig; applied "
+               "2026-09-12; was: detected >= 1 sigma with 1 sigma limits)",
+         role="gates entry into the census and the mixing ratios",
+         update="applied"),
     dict(priority=9, quantity="negative-channel cut",
-         value="drop_negative_sigma = 1.0 (FitConfig)",
-         role="one-sided cut biases Q upward by ~ +0.29 sigma per channel for pure noise",
-         update="quantify jointly with the 1-sigma detection tier by noise injection"),
-    dict(priority=10, quantity="photometric error column",
-         value="source_sum_err_empirical_mjy (Variant.error_column; applied 2026-09-09, was source_sum_err_mjy)",
-         role="the revised photometry reports sky_excess_ratio ~ 1.2, i.e. the VARIANCE plane "
-              "under-reports the true scatter; this error is a lower bound",
+         value="none (FitConfig.drop_negative_sigma = None; applied 2026-09-12; was: channels more than "
+               "1 sigma below zero dropped)",
+         role="the one-sided cut biased Q upward by ~0.3 sigma per channel and could empty a group",
+         update="applied"),
+    dict(priority=10, quantity="photometric error column and error model",
+         value="source_sum_err_empirical_mjy (applied 2026-09-09) with the continuum-coefficient "
+               "covariance propagated in full (generalised least squares, FitConfig.gls; applied 2026-09-12)",
+         role="the VARIANCE plane under-reports the scatter; the continuum error is correlated "
+              "across a band and was propagated as diagonal before",
          update="applied; a per-target sky_excess_ratio rescaling remains an option"),
     dict(priority=11, quantity="grouping thresholds",
          value="rh_tol 10 %, arc_min_drh 0.001 au, link_drh 0.05 au, manual edges for 24P / 2024E1",
@@ -447,6 +516,15 @@ PLACEHOLDERS: Tuple[dict, ...] = (
          role="selects the database template (line intensities within a band); the "
               "band-integrated g-factors change by < 3 % over 30-130 K, so Q is insensitive",
          update="a per-comet value from the literature, or leave fixed"),
+    dict(priority=16, quantity="sky annulus (upstream)",
+         value="inner radius 150 000 km at the comet, floored at 15 px and capped at 40 px, 5 px wide "
+               "(spherex_apphot Config.annulus_r_in_km; applied 2026-09-12; was: fixed 15-20 px)",
+         role="the fixed ring sat at 40 000 km for 24P, inside the coma, removing 3.5-9 % of the flux",
+         update="applied; the physical radius is a convention -- test 100 000 and 200 000 km"),
+    dict(priority=17, quantity="grouping: observer-distance rule",
+         value="Delta spread < 20 % inside every group (GroupingConfig.delta_tol; applied 2026-09-12)",
+         role="bounds the r_h^2 Delta^2 spread the distance-corrected continuum must absorb",
+         update="applied; 20 % is a convention"),
     dict(priority=15, quantity="source-flag thresholds (upstream)",
          value="flag a: G_eff < 13 within r_ap + 2 FWHM; flag b: Gaia flux > 0.2 x comet flux "
                "within r_ap + FWHM (spherex_apphot.Config)",

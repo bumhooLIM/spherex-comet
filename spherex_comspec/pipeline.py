@@ -26,7 +26,7 @@ from . import directory as _dir
 from .config import (EMISSION_DTYPES, MAIN_VARIANT, ApertureConfig, FitConfig, GroupingConfig,
                      ModelParams, Variant)
 from .continuum import insufficient, n_in_emission, process_group
-from .dataio import (PhaseAssignment, aperture_for, list_catalog, list_targets, load_apphot,
+from .dataio import (PhaseAssignment, aperture_choice, list_catalog, list_targets, load_apphot,
                      load_fit_input, save_emission, save_fit_lines, save_fit_table,
                      select_spectrum, slug)
 from .fitting import fit_production_rates, model_curves
@@ -61,11 +61,11 @@ def run_grouping(targets: Optional[Sequence[str]] = None,
 
 
 def choose_apertures(targets: Sequence[str], cfg: ApertureConfig) -> pd.DataFrame:
-    """One aperture per target, with the coverage that justified it."""
+    """One aperture per target, with the evidence that justified it (``dataio.aperture_choice``)."""
     rows = []
     for t in targets:
-        r, lab, cov = aperture_for(t, cfg)
-        rows.append(dict(target=slug(t), r_ap_km=r, ap_label=lab, coverage=cov))
+        c = aperture_choice(t, cfg)
+        rows.append(dict(target=slug(t), **c))
     return pd.DataFrame(rows)
 
 

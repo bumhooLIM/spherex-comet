@@ -38,7 +38,7 @@ from .config import ALL_EM_WINDOWS, BAND_WINDOWS, MJY_TO_WM2UM, ContinuumConfig
 from .dataio import slug
 from .logging_utils import get_logger
 
-__all__ = ["continuum_mask", "fit_continuum", "continuum_at", "cv_rmse", "validate_fit",
+__all__ = ["continuum_mask", "fit_continuum", "continuum_at", "cv_rmse", "select_order", "validate_fit",
            "subtract_continuum", "aggregate_band", "insufficient", "n_in_emission",
            "process_group", "continuum_model_columns", "rebuild_continuum"]
 
@@ -81,11 +81,26 @@ def fit_continuum(raw: pd.DataFrame, band: str, cfg: ContinuumConfig) -> dict:
     lam_c = b["lam_c"]
     order_req = int(cfg.poly_orders.get(band, 2))
     wl, y, e = raw.wl.to_numpy(float), raw.flux.to_numpy(float), raw.err.to_numpy(float)
-    cmask = continuum_mask(wl, b["cont"])
+    cont = tuple(b["cont"])
+    cmask = continuum_mask(wl, cont)
+    extended = ""
+    if cfg.one_sided_extend_um is not None and cmask.sum() > 0:
+        # a window with points on one side only: reach out to `one_sided_extend_um` from the
+        # band edge on the empty side (every emission window is still punched out)
+        n_blue0 = int((wl[cmask] < b["em"][0]).sum())
+        n_red0 = int((wl[cmask] > b["em"][1]).sum())
+        lo, hi = cont
+        if n_blue0 == 0 and n_red0 > 0:
+            lo, extended = b["em"][0] - cfg.one_sided_extend_um, "blue"
+        elif n_red0 == 0 and n_blue0 > 0:
+            hi, extended = b["em"][1] + cfg.one_sided_extend_um, "red"
+        if extended:
+            cont = (lo, hi)
+            cmask = continuum_mask(wl, cont)
     xc, yc, ec = wl[cmask], y[cmask], e[cmask]
 
-    res = dict(band=band, lam_c=lam_c, em=b["em"], cont=b["cont"], order_req=order_req,
-               n_cont_avail=int(cmask.sum()),
+    res = dict(band=band, lam_c=lam_c, em=b["em"], cont=cont, order_req=order_req,
+               n_cont_avail=int(cmask.sum()), extended=extended,
                n_blue=int((xc < b["em"][0]).sum()), n_red=int((xc > b["em"][1]).sum()),
                cmask=cmask, xc=xc, yc=yc, ec=ec)
 
@@ -114,7 +129,11 @@ def fit_continuum(raw: pd.DataFrame, band: str, cfg: ContinuumConfig) -> dict:
     has_right = bool((xc > b["em"][1]).any())
     order_cap = order_req if (has_left and has_right) else 1
     res["order_capped"] = order_cap != order_req
-    order = int(np.clip(order_cap, 1, max(1, len(xc) - 3)))
+    order_cap = int(np.clip(order_cap, 1, max(1, len(xc) - 3)))
+    if cfg.order_mode == "cv" and order_cap > 1:
+        order_cap = select_order(xc - lam_c, yc, ec, order_cap, cfg)
+    res["order_selected"] = order_cap
+    order = order_cap
     keep = np.ones(len(xc), bool)
     for _ in range(cfg.maxiters):
         c, cov = _wpolyfit(xc[keep] - lam_c, yc[keep], ec[keep], order)
@@ -143,6 +162,23 @@ def continuum_at(fit: dict, lam):
 
 
 # ---------------------------------------------------------------------------- validation
+def select_order(x, y, err, max_order: int, cfg: ContinuumConfig) -> int:
+    """
+    Polynomial order by leave-one-out cross-validation: the lowest order in 1..max_order whose
+    CV RMSE is within ``cfg.cv_select_margin`` of the best (parsimony breaks near-ties).  Falls
+    back to 1 when no order can be cross-validated.
+    """
+    cand = {o: cv_rmse(x, y, err, o, cfg) for o in range(1, int(max_order) + 1)}
+    cand = {o: r for o, r in cand.items() if np.isfinite(r)}
+    if not cand:
+        return 1
+    best = min(cand.values())
+    for o in sorted(cand):
+        if cand[o] <= (1.0 + cfg.cv_select_margin) * best:
+            return int(o)
+    return int(min(cand, key=cand.get))
+
+
 def cv_rmse(x, y, err, order, cfg: ContinuumConfig, seed: int = 0) -> float:
     """Cross-validated RMSE (leave-one-out, or 10-fold above ``cfg.cv_loo_max`` points)."""
     n = len(x)
@@ -225,10 +261,15 @@ def validate_fit(fit: dict, cfg: ContinuumConfig) -> dict:
         notes.append(f"CV favours order {v['cv_best_order']:.0f}")
     if fit["method"] == "2point":
         notes.append("2-point fallback (sparse continuum, 0 dof -- unverifiable)")
+    if fit.get("extended"):
+        notes.append(f"continuum window extended on the {fit['extended']} side to "
+                     f"{fit['cont'][0]:.2f}-{fit['cont'][1]:.2f} um")
     if fit.get("order_capped"):
         notes.append(f"order capped {fit['order_req']}->1 (one-sided continuum)")
     elif fit["order_used"] != fit["order_req"] and fit["method"] == "poly":
-        notes.append(f"order reduced {fit['order_req']}->{fit['order_used']}")
+        notes.append(f"order {fit['order_used']} of max {fit['order_req']} by CV"
+                     if cfg.order_mode == "cv" else
+                     f"order reduced {fit['order_req']}->{fit['order_used']}")
     if np.isfinite(v["err_scale"]) and v["err_scale"] > 3:
         notes.append(f"formal errors understate scatter by x{v['err_scale']:.0f}")
 
@@ -353,6 +394,7 @@ def aggregate_band(sub: pd.DataFrame, fit: dict, val: dict, target: str, r_ap_km
         n_cont_avail=fit["n_cont_avail"], n_cont_blue=fit["n_blue"], n_cont_red=fit["n_red"],
         n_cont_used=fit["n_cont_used"], n_cont_clipped=fit["n_clipped"],
         bracketed=bool(fit.get("bracketed", False)), order_capped=bool(fit.get("order_capped", False)),
+        cont_extended=str(fit.get("extended", "")),
         chi2_red=val["chi2_red"], rms_cont_mjy=val["rms_mjy"], err_scale=val["err_scale"],
         z_shape=val["z_shape"], cv_rmse_mjy=val["cv_rmse"], cv_best_order=val["cv_best_order"],
         pass_bracket=val["pass_bracket"], pass_positive=val["pass_positive"],

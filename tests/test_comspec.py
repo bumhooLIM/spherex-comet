@@ -209,6 +209,104 @@ def test_heliocentric_velocity_from_the_ephemeris():
     assert np.isnan(heliocentric_velocity([2460000.0], [1.5]))[0]
 
 
+# --------------------------------------------------------- 2026-09-12 rules
+def test_select_order_prefers_the_simplest_adequate_polynomial():
+    from spherex_comspec.config import ContinuumConfig
+    from spherex_comspec.continuum import select_order
+    x = np.linspace(-0.4, 0.4, 24)
+    e = np.full(24, 0.05)
+    cfg = ContinuumConfig()
+    picks_lin, picks_cub = [], []
+    for seed in range(10):
+        rng = np.random.default_rng(seed)
+        picks_lin.append(select_order(x, 3.0 + 2.0 * x + e * rng.standard_normal(24), e, 3, cfg))
+        picks_cub.append(select_order(x, 3.0 + 2.0 * x - 40.0 * x ** 3 + e * rng.standard_normal(24), e, 3, cfg))
+    assert picks_lin.count(1) >= 8 and all(p == 3 for p in picks_cub)
+    assert select_order(x[:3], x[:3], e[:3], 3, cfg) == 1           # nothing to cross-validate
+
+
+def test_one_sided_continuum_is_extended_to_bracket_the_band():
+    from spherex_comspec.config import ContinuumConfig
+    from spherex_comspec.continuum import fit_continuum
+    # channels only red of the 2.7 um band inside the standard window, plus a blue stretch at
+    # 1.9-2.15 um that only the extension can reach
+    wl = np.concatenate([np.linspace(1.90, 2.15, 8), np.linspace(2.82, 3.08, 8)])
+    raw = pd.DataFrame(dict(wl=wl, flux=1.0 + 0.1 * (wl - 2.7), err=np.full(len(wl), 0.02),
+                            distcorr_factor=1.0))
+    ext = fit_continuum(raw, "2.7um", ContinuumConfig())
+    assert ext["extended"] == "blue" and ext["n_blue"] > 0 and ext["bracketed"]
+    assert abs(ext["cont"][0] - 1.50) < 1e-9
+    off = fit_continuum(raw, "2.7um", ContinuumConfig(one_sided_extend_um=None))
+    assert off["n_blue"] == 0 and not off["bracketed"] and off["order_used"] == 1
+
+
+def test_detection_tiers_and_limits():
+    pts, p, truth = _synthetic_points()
+    cfg = FitConfig()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        fit = fit_production_rates(pts, p, cfg)
+        # inflate the errors so the strong species become marginal and the weak one a limit
+        big = pts.copy()
+        for c in ("emis_raw_err_mjy", "emis_err_mjy"):
+            big[c] = big[c] * 12
+        weak = fit_production_rates(big, p, cfg)
+    for k in range(3):
+        st, nsig = fit.status[k], fit.Q_fit[k] / fit.Q_err[k]
+        assert st == ("detected" if nsig >= 3 else "marginal" if nsig >= 1 else "upper_limit") or st == "negative_fit"
+        if st in ("marginal", "upper_limit"):
+            assert fit.Q_limit[k] == pytest.approx(fit.Q_fit[k] + 3 * fit.Q_err[k])
+    assert "marginal" in set(weak.status) or "upper_limit" in set(weak.status)
+    assert not weak.upper_limit[list(weak.status).index("marginal")] if "marginal" in set(weak.status) else True
+    row = fit.to_row()
+    assert "Q_H2O_nsig" in row and np.isfinite(row["Q_H2O_nsig"])
+
+
+def test_gls_reduces_to_the_diagonal_solve_without_continuum_covariance():
+    from spherex_comspec.fitting import data_covariance
+    pts, p, _ = _synthetic_points()
+    cfg = FitConfig()
+    assert data_covariance(pts, cfg) is None                 # no covariance columns -> diagonal path
+    # zero coefficient covariance and err_raw = emis_raw_err: the GLS solve must equal the diagonal one
+    z = pts.copy()
+    z["err_raw"] = z["emis_raw_err_mjy"]
+    z["flux_space"] = "physical"
+    z["cont_lam_ref_um"] = z.band.map({"2.7um": 2.70, "4.3um": 4.26, "4.7um": 4.67})
+    for i in range(4):
+        z[f"cont_c{i}"] = 0.0
+        for j in range(i, 4):
+            z[f"cont_cov_{i}{j}"] = 0.0
+    S = data_covariance(z, cfg)
+    assert S is not None and np.allclose(np.diag(S), z.emis_raw_err_mjy ** 2)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        a = fit_production_rates(z, p, cfg)
+        b = fit_production_rates(pts, p, FitConfig(gls=False))
+    assert np.allclose(a.Q_fit, b.Q_fit, rtol=1e-10) and np.allclose(a.Q_err_formal, b.Q_err_formal, rtol=1e-10)
+    assert a.geometry["gls"] and not b.geometry["gls"]
+    # a correlated continuum error within a band inflates the errors of the species carried by it
+    z2 = z.copy()
+    z2.loc[z2.band == "4.3um", "cont_cov_00"] = (0.5 * z2.loc[z2.band == "4.3um", "emis_raw_err_mjy"].mean()) ** 2
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        c = fit_production_rates(z2, p, cfg)
+    assert c.Q_err_formal[1] > a.Q_err_formal[1]
+
+
+def test_h2o_hot_fallback_respects_the_distance_cap():
+    pts, p, _ = _synthetic_points()
+    no27 = pts[pts.band != "2.7um"].reset_index(drop=True)
+    far = no27.copy()
+    far["r_hel"] = 4.0
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        near = fit_production_rates(no27, p, FitConfig())
+        beyond = fit_production_rates(far, p, FitConfig())
+        uncapped = fit_production_rates(far, p, FitConfig(h2o_hot_max_rh_au=None))
+    assert near.h2o_source == "hot" and beyond.h2o_source == "none" and uncapped.h2o_source == "hot"
+    assert "withheld beyond 3 au" in "; ".join(beyond.caveats())
+
+
 def test_default_variants_are_well_formed():
     """The driver selects study partners by role, so the registry must have unique names,
     exactly one main variant, and that one must be MAIN_VARIANT."""
@@ -225,7 +323,8 @@ def test_regrouping_reproduces_the_old_map():
     if not (HAVE_DATA and HAVE_OLD):
         return
     from spherex_comspec.grouping import regroup_all
-    _, gmap, _, _ = regroup_all(["24P", "2024E1", "10P", "172P"], GroupingConfig())
+    # the old map predates rule 1b (Delta spread); reproduce it with that rule off
+    _, gmap, _, _ = regroup_all(["24P", "2024E1", "10P", "172P"], GroupingConfig(delta_tol=None))
     old = pd.read_csv(OLD_MAP)
     for t in ("24P", "2024E1", "10P", "172P"):
         o, n = old[old.target == t], gmap[gmap.target == t]
@@ -234,14 +333,32 @@ def test_regrouping_reproduces_the_old_map():
         assert (o.n_meas.values == n.n_meas.values).all(), t
 
 
-def test_aperture_promotion_for_a_distant_target():
+def test_delta_rule_bounds_every_group():
+    if not HAVE_DATA:
+        return
+    from spherex_comspec.grouping import regroup_all
+    _, gmap, _, _ = regroup_all(["24P", "10P"], GroupingConfig())
+    assert (gmap.delta_spread < 0.20).all() and (gmap[~gmap.manual].spread < 0.10).all()
+    _, gmap0, _, _ = regroup_all(["24P", "10P"], GroupingConfig(delta_tol=None))
+    assert len(gmap) >= len(gmap0) and (gmap0.delta_spread >= 0.20).any()
+
+
+def test_aperture_rules():
     if not (_dir.APPHOT_DIR / "2014UN271.csv").is_file():
         return
-    from spherex_comspec.dataio import aperture_for
-    r, lab, cov = aperture_for("2014UN271", ApertureConfig())
+    from spherex_comspec.dataio import aperture_for, aperture_choice
+    # the previous rule, kept for the dc_rules_previous variant
+    r, lab, cov = aperture_for("2014UN271", ApertureConfig(rule="rh"))
     assert r == 80000.0 and cov >= 0.95
-    r, lab, cov = aperture_for("24P", ApertureConfig())
+    r, lab, cov = aperture_for("24P", ApertureConfig(rule="rh"))
     assert r == 20000.0 and cov >= 0.99
+    # the S/N rule respects coverage, the PSF and the annulus bound; 2022 R3 has negative scores
+    for t in ("24P", "10P", "2014UN271", "2022R3"):
+        c = aperture_choice(t, ApertureConfig())
+        assert c["coverage"] >= 0.95 and c["r_ap_km"] > 0
+        if c["rule"] == "snr" and not c["relaxed"] and np.isfinite(c["r_in_km"]):
+            assert c["r_ap_km"] <= c["r_in_km"] / 3 + 1e-6
+            assert c["snr_median"] >= c["snr_best"] - 0.1 * abs(c["snr_best"])
 
 
 def test_flag_policies_select_nested_samples():

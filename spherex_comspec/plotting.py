@@ -335,6 +335,8 @@ def plot_fit(fit, points: pd.DataFrame, curves: dict, fit_cfg):
             qtxt.append(f"Q({PRETTY[s]}) not covered")
         elif st in ("upper_limit", "negative_fit"):
             qtxt.append(f"Q({PRETTY[s]}) $<$ {fit.Q_limit[k]:.2e}")
+        elif st == "marginal":
+            qtxt.append(f"Q({PRETTY[s]}) = {fit.Q[k]:.2e} $\\pm$ {fit.Q_err[k]:.1e} (marginal)")
         else:
             qtxt.append(f"Q({PRETTY[s]}) = {fit.Q[k]:.2e} $\\pm$ {fit.Q_err[k]:.1e}")
     fig.suptitle(f"{fit.target}   phase {fit.phase}   $r_{{ap}}$ = {fit.r_ap_km:,.0f} km   "
@@ -364,37 +366,51 @@ def plot_fit(fit, points: pd.DataFrame, curves: dict, fit_cfg):
 
 
 # --------------------------------------------------------------------- summary figures
+def _aperture_class(r_ap_km) -> np.ndarray:
+    """Three marker classes: the per-aperture legend of the S/N rule (19 radii) is unreadable."""
+    r = np.asarray(r_ap_km, float)
+    return np.where(r <= 20000, 0, np.where(r <= 40000, 1, 2))
+
+
+_AP_CLASS = (("o", "≤ 20 000 km"), ("s", "22 000–40 000 km"), ("D", "≥ 60 000 km"))
+
+
 def plot_summary_Q(fits: pd.DataFrame, title: str = ""):
-    """Q vs mean r_h per species; detections by aperture, limits in grey."""
-    aps = sorted(fits.r_ap_km.unique())
-    mk = ["o", "s", "D", "P", "X"]
-    fig, axes = plt.subplots(1, 3, figsize=(24, 8))
+    """Q vs mean r_h per species: ≥ 3σ detections filled, marginal (1–3σ) hollow, 3σ limits grey;
+    the marker shape is the aperture class."""
+    fig, axes = plt.subplots(1, 3, figsize=(24, 9))
     for ax, s in zip(axes, SPECIES):
         det = fits[(fits[f"Q_{s}_status"] == "detected") & (fits[f"Q_{s}_n_eff"] >= 2)]
+        mar = fits[fits[f"Q_{s}_status"] == "marginal"]
         lim = fits[fits[f"Q_{s}_status"].isin(["upper_limit", "negative_fit"])]
         hot = (det.h2o_source == "hot") if (s == "H2O" and "h2o_source" in det) else pd.Series(False, index=det.index)
-        for i, ap in enumerate(aps):
-            dd = det[(det.r_ap_km == ap) & ~hot]
+        for k, (mk, lab) in enumerate(_AP_CLASS):
+            dd = det[(_aperture_class(det.r_ap_km) == k) & ~hot.to_numpy()]
             if len(dd):
-                ax.errorbar(dd.r_hel_mean, dd[f"Q_{s}"], yerr=dd[f"Q_{s}_err"], fmt=mk[i % 5],
-                            ms=10, lw=1.5, capsize=4, color=SP_COLORS[s],
-                            label=f"detected, {ap / 1000:.0f}k km")
-            hh = det[(det.r_ap_km == ap) & hot]
+                ax.errorbar(dd.r_hel_mean, dd[f"Q_{s}"], yerr=dd[f"Q_{s}_err"], fmt=mk, ms=11, lw=1.5,
+                            capsize=4, color=SP_COLORS[s], label=f"≥ 3σ, n_eff ≥ 2 ({lab})")
+            hh = det[(_aperture_class(det.r_ap_km) == k) & hot.to_numpy()]
             if len(hh):
-                ax.errorbar(hh.r_hel_mean, hh[f"Q_{s}"], yerr=hh[f"Q_{s}_err"], fmt=mk[i % 5],
-                            ms=10, lw=1.5, capsize=4, color=SP_COLORS[s], mfc="none", mew=2,
-                            label=f"from hot bands (2.7 µm not covered), {ap / 1000:.0f}k km")
-            uu = lim[lim.r_ap_km == ap]
+                ax.errorbar(hh.r_hel_mean, hh[f"Q_{s}"], yerr=hh[f"Q_{s}_err"], fmt=mk, ms=11, lw=1.5,
+                            capsize=4, color=SP_COLORS[s], mfc="none", mew=2.5,
+                            label=f"≥ 3σ from hot bands ({lab})")
+            mm = mar[_aperture_class(mar.r_ap_km) == k]
+            if len(mm):
+                ax.errorbar(mm.r_hel_mean, mm[f"Q_{s}"], yerr=mm[f"Q_{s}_err"], fmt=mk, ms=8, lw=1.0,
+                            capsize=3, color=SP_COLORS[s], mfc="none", mew=1.2, alpha=0.55,
+                            label=f"marginal 1–3σ ({lab})")
+            uu = lim[_aperture_class(lim.r_ap_km) == k]
             if len(uu):
-                ax.errorbar(uu.r_hel_mean, uu[f"Q_{s}_upper_limit"],
-                            yerr=0.35 * uu[f"Q_{s}_upper_limit"], fmt=mk[i % 5], ms=8, lw=1.2,
-                            uplims=True, color="0.6", label=f"limit, {ap / 1000:.0f}k km")
+                ax.errorbar(uu.r_hel_mean, uu[f"Q_{s}_upper_limit"], yerr=0.35 * uu[f"Q_{s}_upper_limit"],
+                            fmt=mk, ms=7, lw=1.0, uplims=True, color="0.6", alpha=0.8,
+                            label=f"3σ limit ({lab})")
         ax.set(yscale="log", xscale="log", xlabel=r"$\langle r_h \rangle$ [au]",
                ylabel=r"$Q$ [molecules s$^{-1}$]" if s == "H2O" else "")
-        ax.set_title(f"Q({PRETTY[s]})   ({len(det)} robust detections)", pad=14)
+        ax.set_title(f"Q({PRETTY[s]}):  {len(det)} robust ≥ 3σ,  {len(mar)} marginal", pad=14)
         ax.grid(alpha=0.3, which="both")
-        # the legend can reach a dozen entries (aperture x status x source): keep it off the data
-        ax.legend(fontsize=11, ncol=2, loc="upper center", bbox_to_anchor=(0.5, -0.16), frameon=False)
+        # one entry per (status, aperture class): at most 12, below the axes
+        h, l = ax.get_legend_handles_labels()
+        ax.legend(h, l, fontsize=11, ncol=2, loc="upper center", bbox_to_anchor=(0.5, -0.16), frameon=False)
     fig.suptitle(title or "Gas production rates vs heliocentric distance", y=1.02)
     fig.tight_layout()
     return fig

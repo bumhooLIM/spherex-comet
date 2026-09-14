@@ -29,7 +29,7 @@ from .config import EMISSION_WINDOWS, GroupingConfig
 from .dataio import exposure_table, list_targets, slug
 from .logging_utils import get_logger
 
-__all__ = ["orbital_arc", "band_runs", "cut_costs", "split_groups", "manual_segments",
+__all__ = ["orbital_arc", "feasible", "band_runs", "cut_costs", "split_groups", "manual_segments",
            "subdivide", "group_summary", "regroup_all"]
 
 log = get_logger("grouping")
@@ -56,13 +56,26 @@ def orbital_arc(r_hel, cfg: GroupingConfig) -> Tuple[np.ndarray, "int | None"]:
     return arc, k
 
 
-def band_runs(r_hel, sampled, tol: float) -> List[Tuple[int, int]]:
+def _spread(x) -> float:
+    x = np.asarray(x, float)
+    return float((x.max() - x.min()) / x.mean())
+
+
+def feasible(r_hel, r_obs, tol: float, delta_tol: "float | None") -> bool:
+    """Rule 1 (r_h spread) and rule 1b (Delta spread) for one candidate group."""
+    if _spread(r_hel) >= tol:
+        return False
+    return delta_tol is None or r_obs is None or _spread(r_obs) < delta_tol
+
+
+def band_runs(r_hel, sampled, tol: float, r_obs=None, delta_tol: "float | None" = None) -> List[Tuple[int, int]]:
     """
     Maximal runs of band epochs that can be held in one group, as index ranges.
 
-    A run grows while the *whole interval it spans* still satisfies the
-    tolerance, so a run is always feasible by itself.  Single-epoch runs are
-    dropped: a lone point cannot be split and constrains nothing.
+    A run grows while the *whole interval it spans* still satisfies the r_h
+    tolerance (and the Delta tolerance when given), so a run is always feasible
+    by itself.  Single-epoch runs are dropped: a lone point cannot be split and
+    constrains nothing.
     """
     hits = np.flatnonzero(sampled)
     runs, start = [], None
@@ -70,8 +83,7 @@ def band_runs(r_hel, sampled, tol: float) -> List[Tuple[int, int]]:
         if start is None:
             start = i
             continue
-        seg = r_hel[start:i + 1]
-        if (seg.max() - seg.min()) / seg.mean() < tol:
+        if feasible(r_hel[start:i + 1], None if r_obs is None else r_obs[start:i + 1], tol, delta_tol):
             continue
         runs.append((start, hits[pos - 1]))
         start = i
@@ -80,7 +92,7 @@ def band_runs(r_hel, sampled, tol: float) -> List[Tuple[int, int]]:
     return [(a, b) for a, b in runs if b > a]
 
 
-def cut_costs(r_hel, sampled_by_band: Dict[str, np.ndarray], cfg: GroupingConfig):
+def cut_costs(r_hel, sampled_by_band: Dict[str, np.ndarray], cfg: GroupingConfig, r_obs=None):
     """
     Per-boundary cost of cutting: (band runs broken, link penalty).
 
@@ -92,7 +104,7 @@ def cut_costs(r_hel, sampled_by_band: Dict[str, np.ndarray], cfg: GroupingConfig
     n = len(r_hel)
     n_break = np.zeros(n, int)
     for sampled in sampled_by_band.values():
-        for s, e in band_runs(r_hel, sampled, cfg.rh_tol):
+        for s, e in band_runs(r_hel, sampled, cfg.rh_tol, r_obs, cfg.delta_tol):
             n_break[s + 1:e + 1] += 1
     link = np.zeros(n)
     d = np.abs(np.diff(r_hel))
@@ -100,7 +112,8 @@ def cut_costs(r_hel, sampled_by_band: Dict[str, np.ndarray], cfg: GroupingConfig
     return n_break, link
 
 
-def split_groups(r_hel, weight, n_break, link, tol: float) -> List[Tuple[int, int]]:
+def split_groups(r_hel, weight, n_break, link, tol: float, r_obs=None,
+                 delta_tol: "float | None" = None) -> List[Tuple[int, int]]:
     """
     Cut a time-ordered epoch block into groups, minimising the four-part cost.
 
@@ -108,8 +121,10 @@ def split_groups(r_hel, weight, n_break, link, tol: float) -> List[Tuple[int, in
     ``(band breaks, n_groups, link penalty, total spread)``, compared
     lexicographically -- band integrity outranks group count, group count
     outranks where the cuts land, and the spread only breaks ties.  The inner
-    loop stops on the monotone bound ``1 - r_min/r_max >= tol``; feasibility is
-    then tested with the true (measurement-weighted) criterion.
+    loop stops on the monotone bounds ``1 - r_min/r_max >= tol`` and, with
+    ``delta_tol``, ``1 - d_min/d_max >= delta_tol``; feasibility is then tested
+    with the true (measurement-weighted) r_h criterion and the Delta spread.
+    ``tol = inf`` disables the r_h rule (used to subdivide manual bins by Delta).
 
     Returns
     -------
@@ -117,21 +132,32 @@ def split_groups(r_hel, weight, n_break, link, tol: float) -> List[Tuple[int, in
         Half-open index ranges in time order, covering the input exactly.
     """
     n = len(r_hel)
+    use_delta = delta_tol is not None and r_obs is not None
     unreachable = (n + 1, n + 1, np.inf, np.inf)
     dp = [unreachable] * (n + 1)
     dp[0] = (0, 0, 0.0, 0.0)
     back = [-1] * (n + 1)
     for i in range(1, n + 1):
         r_max, r_min, w_sum, rw_sum = -np.inf, np.inf, 0.0, 0.0
+        d_max, d_min, dw_sum = -np.inf, np.inf, 0.0
         for j in range(i - 1, -1, -1):
             r = r_hel[j]
             r_max = max(r_max, r)
             r_min = min(r_min, r)
             w_sum += weight[j]
             rw_sum += r * weight[j]
-            if (r_max - r_min) >= tol * r_max:
+            if np.isfinite(tol) and (r_max - r_min) >= tol * r_max:
                 break
-            spread = (r_max - r_min) / (rw_sum / w_sum)
+            if use_delta:
+                d = r_obs[j]
+                d_max = max(d_max, d)
+                d_min = min(d_min, d)
+                dw_sum += d * weight[j]
+                if (d_max - d_min) >= delta_tol * d_max:
+                    break
+                if (d_max - d_min) / (dw_sum / w_sum) >= delta_tol:
+                    continue
+            spread = (r_max - r_min) / (rw_sum / w_sum) if np.isfinite(tol) else 0.0
             if spread >= tol:
                 continue
             b, l = (n_break[j], link[j]) if j > 0 else (0, 0.0)
@@ -187,11 +213,23 @@ def subdivide(target: str, ep: pd.DataFrame, cfg: GroupingConfig):
     for _, g in ep.groupby(["epoch", "arc"], sort=True):
         idx = g.index.to_numpy()
         r_hel = g.r_hel.to_numpy(float)
-        n_break, link = cut_costs(r_hel, {b: g[b].to_numpy() for b in EMISSION_WINDOWS}, cfg)
+        r_obs = g.r_obs.to_numpy(float)
+        w = g.weight.to_numpy(float)
+        n_break, link = cut_costs(r_hel, {b: g[b].to_numpy() for b in EMISSION_WINDOWS}, cfg, r_obs)
         edges = cfg.manual_edges.get(key, {}).get("out" if g.arc.iloc[0] else "in")
         manual = edges is not None
-        segs = (manual_segments(r_hel, edges) if manual
-                else split_groups(r_hel, g.weight.to_numpy(float), n_break, link, cfg.rh_tol))
+        if manual:
+            segs = []
+            for a, b in manual_segments(r_hel, edges):
+                # rule 1b inside a hand-set r_h bin: subdivide by Delta only
+                if cfg.delta_tol is not None:
+                    for a2, b2 in split_groups(r_hel[a:b], w[a:b], n_break[a:b], link[a:b], np.inf,
+                                               r_obs[a:b], cfg.delta_tol):
+                        segs.append((a + a2, a + b2))
+                else:
+                    segs.append((a, b))
+        else:
+            segs = split_groups(r_hel, w, n_break, link, cfg.rh_tol, r_obs, cfg.delta_tol)
         for a, b in segs:
             n += 1
             label[idx[a:b]] = n
@@ -220,6 +258,7 @@ def group_summary(target: str, ep: pd.DataFrame) -> List[dict]:
                        r_hel_mean=mean, r_hel_min=float(g.r_hel.min()),
                        r_hel_max=float(g.r_hel.max()),
                        spread=(float(g.r_hel.max()) - float(g.r_hel.min())) / mean,
+                       delta_spread=(float(g.r_obs.max()) - float(g.r_obs.min())) / float(np.average(g.r_obs, weights=w)),
                        r_obs_mean=float(np.average(g.r_obs, weights=w)),
                        r_obs_min=float(g.r_obs.min()), r_obs_max=float(g.r_obs.max()),
                        jd_start=float(g.jd_utc.min()), jd_end=float(g.jd_utc.max()),
@@ -286,6 +325,8 @@ def regroup_all(targets: Sequence[str] | None = None, cfg: GroupingConfig | None
 
     auto = new[~new.manual]
     assert (auto.spread < cfg.rh_tol).all(), "an automatic group violates rule 1"
+    if cfg.delta_tol is not None:
+        assert (new.delta_spread < cfg.delta_tol).all(), "a group violates rule 1b (Delta spread)"
     log.info("regrouped %d targets: %d epochs -> %d phases (%d epochs subdivided, %d manual "
              "groups) in %.1f s", len(targets), len(old), len(new), int((n_sub > 1).sum()),
              int(new.manual.sum()), time.time() - t0)

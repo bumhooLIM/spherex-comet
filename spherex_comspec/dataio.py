@@ -27,6 +27,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
+import re
+
 import numpy as np
 import pandas as pd
 
@@ -37,7 +39,7 @@ from .logging_utils import get_logger
 
 __all__ = [
     "slug", "aperture_label", "list_targets", "load_apphot", "exposure_table",
-    "aperture_for", "select_spectrum", "PhaseAssignment", "heliocentric_velocity",
+    "aperture_for", "aperture_choice", "select_spectrum", "PhaseAssignment", "heliocentric_velocity",
     "emission_paths", "save_emission", "load_summary", "load_points", "list_catalog",
     "load_fit_input", "save_fit_table", "save_fit_lines", "REQUIRED_COLUMNS",
 ]
@@ -51,6 +53,7 @@ USECOLS = [
     "flux_distcorr_mjy", "flux_distcorr_err_mjy", "distcorr_factor",
     "sourceflag", "badphot", "frac_badpix_ap", "n_gaia", "gmag_eff",
     "r_hel", "r_obs", "jd_utc", "detector", "snr",
+    "psf_fwhm_pix", "r_in_pix", "pixel_scale_km",
 ]
 
 REQUIRED_COLUMNS = ("target", "r_ap_km", "phase", "band", "role", "wl", "wlwidth",
@@ -208,31 +211,30 @@ def exposure_table(target: str) -> pd.DataFrame:
 
 # ----------------------------------------------------------------------------- aperture
 def aperture_for(target: str, cfg: ApertureConfig) -> Tuple[float, str, float]:
-    """
-    The single aperture a target is analysed at.
+    """The single aperture a target is analysed at: ``(r_ap_km, ap_label, coverage)``."""
+    c = aperture_choice(target, cfg)
+    return float(c["r_ap_km"]), str(c["ap_label"]), float(c["coverage"])
 
-    Returns
-    -------
-    (r_ap_km, ap_label, coverage)
-        ``coverage`` is the fraction of the target's exposures that carry the
-        chosen aperture.  When the rule aperture falls below
-        ``cfg.min_coverage`` the smallest larger ``km`` aperture that clears it
-        is chosen instead; the log records every promotion.
-    """
-    df = load_apphot(target)
+
+def _coverage_table(df: pd.DataFrame, cfg: ApertureConfig) -> pd.DataFrame:
     n_exp = df.filename.nunique()
+    km = df[df.ap_kind == cfg.kind]
+    cov = (km.groupby(["ap_label", "r_ap_km"])
+             .agg(coverage=("filename", "nunique"), r_ap_pix=("r_ap_pix", "median"),
+                  psf_fwhm_pix=("psf_fwhm_pix", "median") if "psf_fwhm_pix" in km else ("r_ap_pix", "size"))
+             .reset_index())
+    cov["coverage"] = cov["coverage"] / n_exp
+    return cov.sort_values("r_ap_km").reset_index(drop=True)
+
+
+def _rule_rh(target: str, df: pd.DataFrame, cov: pd.DataFrame, cfg: ApertureConfig) -> dict:
+    """The previous rule: ``near_km`` inside ``rh_split_au``, ``far_km`` beyond, promoted for coverage."""
     rh_mean = float(df.drop_duplicates("filename").r_hel.mean())
     want = cfg.near_km if rh_mean < cfg.rh_split_au else cfg.far_km
-
-    km = df[df.ap_kind == cfg.kind]
-    cov = (km.groupby(["ap_label", "r_ap_km"]).filename.nunique() / n_exp).reset_index()
-    cov.columns = ["ap_label", "r_ap_km", "coverage"]
-    cov = cov.sort_values("r_ap_km")
-
     hit = cov[np.isclose(cov.r_ap_km, want)]
     if len(hit) and float(hit.coverage.iloc[0]) >= cfg.min_coverage:
-        return float(want), str(hit.ap_label.iloc[0]), float(hit.coverage.iloc[0])
-
+        return dict(r_ap_km=float(want), ap_label=str(hit.ap_label.iloc[0]),
+                    coverage=float(hit.coverage.iloc[0]), rule="rh", promoted=False)
     bigger = cov[(cov.r_ap_km >= want) & (cov.coverage >= cfg.min_coverage)]
     if bigger.empty:
         # last resort: the best-covered aperture at or above the rule radius
@@ -244,7 +246,106 @@ def aperture_for(target: str, cfg: ApertureConfig) -> Tuple[float, str, float]:
     log.warning("%s: rule aperture %g km covers %.0f %% of exposures (< %.0f %%); "
                 "promoted to %g km (%.0f %%)", target, want, 100 * have,
                 100 * cfg.min_coverage, row.r_ap_km, 100 * row.coverage)
-    return float(row.r_ap_km), str(row.ap_label), float(row.coverage)
+    return dict(r_ap_km=float(row.r_ap_km), ap_label=str(row.ap_label),
+                coverage=float(row.coverage), rule="rh", promoted=True)
+
+
+def aperture_choice(target: str, cfg: ApertureConfig) -> dict:
+    """
+    The single aperture a target is analysed at, with the evidence for the choice.
+
+    ``cfg.rule == "snr"`` (default since 2026-09-12): every ``km`` aperture present for at
+    least ``cfg.min_coverage`` of the exposures, at least ``cfg.min_psf_mult`` PSF FWHM in
+    radius, and no larger than ``cfg.max_ap_frac_annulus`` times the sky annulus' inner
+    radius (so the background is measured outside the coma the aperture integrates) is a
+    candidate; its score is the median S/N of the *star-free* channels inside the emission
+    windows (finite flux, ``frac_badpix_ap <= 0.05``, source flag ``0``), and it needs at
+    least ``cfg.min_clean_channels`` of them.  The chosen aperture is the smallest candidate
+    within ``cfg.snr_tol`` of the best score -- the S/N of a coma is nearly flat with radius,
+    and the smaller aperture keeps the annulus farther away in units of its own radius.
+    When no aperture satisfies the PSF or annulus bound the bound is relaxed in that order
+    (logged, ``relaxed`` in the result); in a field so crowded that no aperture can be
+    scored the smallest bounded aperture is taken (``relaxed = "contaminated"``); the
+    ``"rh"`` rule is the last resort.  ``cfg.rule == "rh"``: the previous rule.
+
+    Returns
+    -------
+    dict
+        ``r_ap_km, ap_label, coverage, rule`` and, for ``"snr"``, ``snr_median, snr_best,
+        r_ap_km_best, r_in_km, n_candidates, relaxed``.
+    """
+    df = load_apphot(target)
+    cov = _coverage_table(df, cfg)
+    if cfg.rule == "rh":
+        return _rule_rh(target, df, cov, cfg)
+    if cfg.rule != "snr":
+        raise ValueError(f"unknown aperture rule {cfg.rule!r} (snr | rh)")
+
+    # annulus inner radius at the comet [km], the same for every aperture of an exposure
+    r_in_km = float(np.nanmedian(df.r_in_pix * df.pixel_scale_km)) \
+        if "r_in_pix" in df and "pixel_scale_km" in df else np.nan
+    km = df[df.ap_kind == cfg.kind]
+    em = np.zeros(len(km), bool)
+    for lo, hi in EMISSION_WINDOWS.values():
+        em |= km.wl.between(lo, hi).to_numpy()
+    ecol = "source_sum_err_empirical_mjy" if "source_sum_err_empirical_mjy" in km else "source_sum_err_mjy"
+    # The score uses only channels without any Gaia source inside r_ap + PSF FWHM (flag "0"):
+    # star flux inflates the "S/N" of a large aperture on a faint comet (2024 N1 at 80 000 km:
+    # 46 % of its emission-window channels carry flag b and two of them are 90 mJy spikes), so a
+    # score over flagged channels would drive the rule to the most contaminated aperture.
+    clean = (em & np.isfinite(km.source_sum_mjy) & np.isfinite(km[ecol]) & (km[ecol] > 0)
+             & ~(km.badphot.astype(bool) & (km.frac_badpix_ap > 0.05))
+             & (km.sourceflag.astype(str) == "0"))
+    d = km[clean]
+    score = (d.source_sum_mjy / d[ecol]).groupby(d.r_ap_km).agg(["median", "size"])
+    cov["snr_median"] = cov.r_ap_km.map(score["median"])
+    cov["n_snr"] = cov.r_ap_km.map(score["size"]).fillna(0).astype(int)
+    flagged = km[em & (km.sourceflag.astype(str).isin(["a", "b"]))].groupby("r_ap_km").size()
+    n_em = km[em].groupby("r_ap_km").size()
+    cov["frac_flag_ab"] = cov.r_ap_km.map((flagged / n_em).fillna(0.0)).fillna(0.0)
+
+    geom = (cov.coverage >= cfg.min_coverage)
+    psf_ok = cov.r_ap_pix >= cfg.min_psf_mult * cov.psf_fwhm_pix.fillna(0)
+    ann_ok = ~np.isfinite(r_in_km) | (cov.r_ap_km <= cfg.max_ap_frac_annulus * r_in_km)
+    scored = (cov.n_snr >= cfg.min_clean_channels) & np.isfinite(cov.snr_median)
+    relaxed = ""
+    cand = cov[geom & psf_ok & ann_ok & scored]
+    if cand.empty:
+        cand, relaxed = cov[geom & (cov.r_ap_pix >= 1.0 * cov.psf_fwhm_pix.fillna(0)) & ann_ok & scored], "psf"
+    if cand.empty:
+        cand, relaxed = cov[geom & psf_ok & scored], "annulus"
+    if cand.empty:
+        # a crowded field: no aperture has enough star-free channels to be scored.  Take the
+        # smallest aperture the bounds allow -- the least contaminated -- rather than any S/N.
+        pool = cov[geom & psf_ok & ann_ok]
+        if pool.empty:
+            pool = cov[geom & (cov.r_ap_pix >= 1.0 * cov.psf_fwhm_pix.fillna(0))]
+        if pool.empty:
+            out = _rule_rh(target, df, cov, cfg)
+            out.update(rule="snr->rh", relaxed="all", r_in_km=r_in_km, n_candidates=0,
+                       snr_median=np.nan, snr_best=np.nan, r_ap_km_best=np.nan, frac_flag_ab=np.nan)
+            log.warning("%s: no aperture satisfies the S/N rule; fell back to the r_h rule", target)
+            return out
+        row = pool.sort_values("r_ap_km").iloc[0]
+        log.warning("%s: fewer than %d star-free emission channels at every aperture; smallest "
+                    "bounded aperture %g km chosen", target, cfg.min_clean_channels, row.r_ap_km)
+        return dict(r_ap_km=float(row.r_ap_km), ap_label=str(row.ap_label), coverage=float(row.coverage),
+                    rule="snr", snr_median=float(row.snr_median), snr_best=np.nan, r_ap_km_best=np.nan,
+                    r_in_km=r_in_km, n_candidates=int(len(pool)), relaxed="contaminated",
+                    frac_flag_ab=float(row.frac_flag_ab))
+    best = float(cand.snr_median.max())
+    # "within snr_tol of the best" must also work when every score is negative (faint targets)
+    ok = cand[cand.snr_median >= best - cfg.snr_tol * abs(best)].sort_values("r_ap_km")
+    if ok.empty:
+        ok = cand.sort_values("snr_median", ascending=False)
+    row = ok.iloc[0]
+    if relaxed:
+        log.warning("%s: aperture rule relaxed (%s): %g km chosen", target, relaxed, row.r_ap_km)
+    return dict(r_ap_km=float(row.r_ap_km), ap_label=str(row.ap_label), coverage=float(row.coverage),
+                rule="snr", snr_median=float(row.snr_median), snr_best=best,
+                r_ap_km_best=float(cand.loc[cand.snr_median.idxmax(), "r_ap_km"]),
+                r_in_km=r_in_km, n_candidates=int(len(cand)), relaxed=relaxed,
+                frac_flag_ab=float(row.frac_flag_ab))
 
 
 # ------------------------------------------------------------------------- flag policy
@@ -435,8 +536,9 @@ def load_fit_input(variant: str, target: str, r_ap_km, phase: int,
     if ok.empty:
         raise ValueError(f"{target} phase {phase} @ {r_ap_km:g} km: no usable band "
                          f"({dict(zip(summ.band, summ.verdict))})")
+    cont_cols = [c for c in ok.columns if re.match(r"^(cont_lam_ref_um|cont_c\d|cont_cov_\d\d)$", c)]
     out = pts[pts.band.isin(ok.band)].merge(
-        ok[["band", "verdict", "err_scale", "chi2_red"]].rename(columns={"chi2_red": "cont_chi2_red"}),
+        ok[["band", "verdict", "err_scale", "chi2_red", *cont_cols]].rename(columns={"chi2_red": "cont_chi2_red"}),
         on="band", how="left")
     missing = [c for c in REQUIRED_COLUMNS if c not in out.columns]
     if missing:
