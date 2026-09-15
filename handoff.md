@@ -15,21 +15,23 @@ history via tag `spherex-comspec-import`; apphot added).  Verified: `pytest test
 to `gas_fit.csv` (89 / 95 of 147 phases).  Deck `doc/figures.pptx` (2026-09-14).
 Deleted on 2026-09-15: the stale 7.6 GB cutout PNGs, the duplicate `data/apphot`, the archived
 old photometry, obsolete notebooks; `fig/apphot/<T>/` summaries still date from 2026-09-07.
-Pre-merge backup of code/docs: `../_backup_pre-merge_2026-09-15.tar.gz`.
+Pre-merge backup of code/docs: `../_backup_pre-merge_2026-09-15.tar.gz`.  **16 literature PDFs
+are missing** (a git history rewrite emptied `doc/literature/`): restore them from Google
+Drive's Trash; `doc/literature/README.md` lists them (2 already recovered).
 
 ## Next Steps
 1. `python scripts/apphot/make_figures.py --target-list data/reference/sx_comet_list_ver2607.xlsx --workers 6 --no-cutouts`
    to refresh `fig/apphot/` for the current photometry; then `scripts/comspec/make_figure_slides.py`.
-2. Run the suites once in the `spherex` env (`pytest tests/ -q`; `pip install -e .`), commit,
-   add a remote for the monorepo; retire the two old repos (nothing was pushed by the merge).
+2. `pip install -e .` and `pytest tests/ -q` once in the `spherex` env; add a remote for the
+   monorepo and retire the two old repos (nothing was pushed by the merge).
 3. Placeholder 1: the SPHEREx LSF / band shape for the bright comets (χ²_ν 10²–10³ at 20 000 km).
 4. Re-test flag `b` at the fixed apertures (`dc_main_no_b`); the 2.42 µm band-3/4 step;
    annulus 100 000 / 200 000 km on 24P, 306P, 508P; aperture thresholds (3 au, 1.5 px, 60 000 km).
-5. Decide: quote marginal values or limits only; 10 000 vs 20 000 km as the dust-context aperture.
+5. Decide: quote marginal values or limits only; 10 000 vs 20 000 km as the dust-context aperture;
+   unify the figure style (`ztfcomet.rcparams` 15 pt vs `notebooks/rcparams.py` 20 pt).
 6. ZTF: apply the coma-in-annulus factor (1/[1 − ½ ρ/r_med], 8–12 %) and the `sky_dominated`
    flag; `notebooks/ztf/figure.ipynb` still uses the old per-target figure names; merge any
    `analysis/*`, `fix/*` branch content not on the current branch.
-7. Unify the figure style (`ztfcomet.rcparams` 15 pt vs `notebooks/rcparams.py` 20 pt).
 
 ## Blind Spots / Dead Ends
 - **`arc` in `phase_map.csv` is an arc index** (`in` until a resolved perihelion): 217P and
