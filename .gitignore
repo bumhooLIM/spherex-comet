@@ -13,25 +13,31 @@ env/
 
 # OS
 .DS_Store
+._*
 
 # Build & dist
 build/
 dist/
 *.egg-info/
 
-# Data and outputs — large, regenerable, never committed.
-# Raw FITS live on the SSD (see ztfcomet/directory.py); these are the local
-# fallbacks. The predecessor repo tracked 36 MB of FITS in git; do not repeat it.
-# The directories themselves are kept (so a fresh clone shows the layout);
-# their contents are not.
+# Data and outputs -- large, regenerable, never committed.
+# Raw ZTF FITS and the SPHEREx cutouts live on the SSD (see the directory.py of
+# each package); data/ztf and data/spherex_sample are the local fallbacks.
+# The small reference tables and every README stay tracked.
 data/*
 results/*
 fig/*
-!data/.gitkeep
-!results/.gitkeep
-!fig/.gitkeep
+!data/README.md
+!data/reference/
+!data/ztf/
+!results/README.md
+!fig/README.md
 *.fits
 *.fits.part
+*.parq
+
+# The review deck is rebuilt by scripts/comspec/make_figure_slides.py
+doc/figures.pptx
 
 # Editor
 .vscode/
