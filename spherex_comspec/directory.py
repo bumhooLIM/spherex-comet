@@ -14,6 +14,8 @@ mistaken for the catalog result::
     results/gas_fit.csv          THE production rates (main variant), gas_fit_lines/, run.meta.json,
                                  continuum_summary.csv, skipped_groups.csv, not_fitted.csv, apertures.csv,
                                  phase_map.csv, phase_cuts.csv, placeholders.csv, logs/
+    results/afrho_ztf.csv        ZTF dust context per (target, phase) -- written by
+                                 ../scripts/attach_afrho_ztf.py, attached to gas_fit.csv and phase_map.csv
     results/studies/<variant>/   the same tables for each study variant
     results/studies/             flag_policy_*.csv, distcorr_effect_*.csv, apphot_comparison/
     fig/emission_model/, fig/cont_subtract/, fig/phase_group/, fig/summary_*.png
@@ -33,7 +35,7 @@ from .config import MAIN_VARIANT
 __all__ = [
     "ROOT", "APPHOT_DIR", "DATA_DIR", "RESULT_DIR", "FIG_DIR", "LOG_DIR", "STUDY_DATA_DIR",
     "STUDY_RESULT_DIR", "STUDY_FIG_DIR", "NOTEBOOK_DIR", "DOC_DIR", "ORBIT_CLASSES_CSV",
-    "variant_dirs", "ensure_dirs", "describe",
+    "AFRHO_ZTF_CSV", "variant_dirs", "ensure_dirs", "describe",
 ]
 
 
@@ -56,6 +58,10 @@ STUDY_FIG_DIR: Path = FIG_DIR / "studies"
 NOTEBOOK_DIR: Path = ROOT / "notebooks"
 DOC_DIR: Path = ROOT / "doc"
 ORBIT_CLASSES_CSV: Path = ROOT / "data" / "reference" / "comet_orbit_classes.csv"
+#: ZTF dust context -- A(0°)fρ at each phase's mean r_h, from the ``ztf-comet`` project
+#: (``../scripts/attach_afrho_ztf.py`` writes it).  Optional: attached to ``gas_fit.csv`` and
+#: ``phase_map.csv`` by :func:`dataio.attach_afrho_ztf` whenever the file is present.
+AFRHO_ZTF_CSV: Path = RESULT_DIR / "afrho_ztf.csv"
 
 
 def variant_dirs(name: str) -> dict:

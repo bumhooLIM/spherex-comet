@@ -57,7 +57,7 @@ built by `../notebooks/fluorescence_gfm/build_fluorescence_db.py`; see
 
 ```bash
 cd spherex-comspec
-python main.py all                       # everything: group, nine variants, analysis, figures
+python main.py all                       # everything: group, ten variants, analysis, figures
 python main.py group                     # (1) regroup the epochs, once
 python main.py run --variants dc_main    # (2) continuum + fit for one variant
 python main.py analyze                   # (3) cross-variant tables
@@ -90,15 +90,19 @@ group-by-group for 66 of 68 targets.  The two that differ (2025 K1, 2025 L1) do
 so because rule 3 reads which exposures sampled a band with `badphot`, whose
 meaning changed (below).
 
-### 2. Aperture (`dataio.aperture_for`)
+### 2. Aperture (`dataio.aperture_table`)
 
-One aperture per target: 20 000 km when the mean r_h is inside 3 au, 40 000 km
-beyond.  The revised photometry refuses an aperture below the PSF or beyond the
-sky annulus, so the rule aperture can be missing for a distant target — 2014 UN271
-at 14.6 au has no 40 000 km measurement at all.  When the rule aperture covers
-fewer than 95 % of a target's exposures, the smallest larger `km` aperture that
-does is used and logged: 2014 UN271 → 80 000 km; 2019 U5, 2022 R3, 2023 RS61
-→ 60 000 km.  `results/apertures.csv` records the choice.
+One fixed aperture per *phase* (`ApertureConfig.rule="fixed"`, 2026-09-14): 20 000 km
+when the phase's median r_h is inside 3 au, 40 000 km beyond, enlarged to 60 000 km when
+that radius is under 1.5 px at the phase's median pixel scale.  The revised photometry
+refuses only apertures below the PSF FWHM (0.86–1.08 px), so the rule aperture exists for
+every exposure except beyond ~9 au (2014 UN271: 60 000 km is 0.9 px, coverage 50 %).
+Over the 193 phases: 99 / 73 / 21 at 20 000 / 40 000 / 60 000 km; 22 comets use two
+apertures across their phases, and the emission files are written per (target, aperture).
+`results/apertures.csv` records the radius, the reason (`near`, `far`, `far->enlarged`),
+the coverage and the phase geometry.  The S/N-driven per-target rule of 2026-09-12 is
+`rule="snr"` (variant `dc_ap_snr`), the r_h rule before it `rule="rh"` (`dc_rules_previous`);
+`aperture_for` applies any rule to a whole target for the notebooks.
 
 ### 3. Flag policy (`config.FlagPolicy`, `dataio.select_spectrum`)
 
@@ -160,16 +164,17 @@ The hot bands carry ~3 % of the water emission (4.63 µm 6.6 × 10⁻⁶, 4.85 �
 
 **Errors.**  The fit uses `source_sum_err_empirical_mjy` (`Variant.error_column`,
 placeholder 10 applied): the formal error under-reports the annulus scatter.
-**Revisions of 2026-09-12** (with the regenerated photometry, whose sky annulus now sits at
-150 000 km instead of a fixed 15–20 px):
+**Revisions of 2026-09-12 and 2026-09-14** (with the regenerated photometry, whose sky
+annulus sits at 150 000 km instead of a fixed 15–20 px; the 2026-09-14 rows were decided by
+the method matrix of `notebooks/method_matrix.py`, `doc/pipeline_decisions.md` §7.9):
 
 | what | now | before |
 |---|---|---|
 | grouping | rule 1b: Δ spread < 20 % inside every group, manual r_h bins included (`GroupingConfig.delta_tol`) | Δ unconstrained |
-| aperture | S/N-driven per target: smallest km aperture (≥ 95 % coverage, ≥ 2 PSF FWHM, ≤ ⅓ of the annulus inner radius) within 10 % of the best median emission-window S/N (`ApertureConfig.rule="snr"`) | 20 000 / 40 000 km by r_h |
-| windows | 2.7 µm emission 2.50–2.80 µm; continua 2.20–3.10 (H₂O) and 3.90–4.65 µm (CO₂); an empty continuum side is extended to 1 µm from the band edge | 2.60–2.80; 2.30–3.00 and 4.00–4.55; no extension |
+| aperture (2026-09-14) | one fixed aperture per phase: 20 000 km inside 3 au, 40 000 km beyond, 60 000 km when the rule radius is under 1.5 px (`ApertureConfig.rule="fixed"`) | 2026-09-12: S/N-driven per target (`rule="snr"`, `dc_ap_snr`); before: 20 000 / 40 000 km by r_h per target (`rule="rh"`) |
+| windows (2026-09-14) | 2.7 µm emission 2.55–2.80 µm over a 2.30–3.00 µm continuum; CO₂ continuum 3.90–4.65 µm; an empty continuum side is extended to 1 µm from the band edge | 2026-09-12: 2.50–2.80 over 2.20–3.10; before: 2.60–2.80 over 2.30–3.00, CO₂ 4.00–4.55, no extension |
 | continuum order | per fit by leave-one-out CV among 1–3, lowest order within 10 % of the best (`ContinuumConfig.order_mode="cv"`) | fixed 3 / 2 / 2 |
-| errors | generalised least squares with the continuum-coefficient covariance (`FitConfig.gls`) | diagonal |
+| errors | generalised least squares with the continuum-coefficient covariance (`FitConfig.gls`); kept on 2026-09-14 because the negative tail of the fits (≤ −2σ) matches the Gaussian expectation only with GLS | diagonal (3–6× too many fits at ≤ −2σ) |
 | tiers | `detected` ≥ 3σ, `marginal` 1–3σ (value + 3σ limit), `upper_limit` < 1σ; limits at 3σ; `Q_X_nsig` | detected ≥ 1σ, 1σ limits |
 | channels | every channel enters the solve | channels > 1σ below zero dropped |
 | H₂O hot bands | fallback only inside 3 au (`FitConfig.h2o_hot_max_rh_au`) | no cap |
@@ -213,7 +218,8 @@ the groups detected in both spaces; 0.48 for the 2026-09-08 baseline).
 | `dc_all` | previous | strict `badphot`, every flag kept (the 2026-09-08 baseline) | distance-corrected | before/after the placeholder switch |
 | `dc_main_gauss` | fluorescence | baseline | distance-corrected | the emission model before 2026-09-11 (Gaussian bands, Ootsubo g-factors, constant g(CO)): what the fluorescence database changes |
 | `dc_main_diag` | errors | baseline | distance-corrected | diagonal errors instead of GLS: what the continuum covariance changes |
-| `dc_rules_previous` | rules | baseline | distance-corrected | the 2026-09-11 rules a variant can carry (r_h aperture rule, fixed 3/2/2 orders, no window extension, 1σ cut and tier, diagonal errors, no hot-band cap) |
+| `dc_ap_snr` | rules | baseline | distance-corrected | the S/N-driven per-target aperture of 2026-09-12 against the fixed per-phase rule |
+| `dc_rules_previous` | rules | baseline | distance-corrected | the 2026-09-11 rules a variant can carry (r_h aperture rule per target, fixed 3/2/2 orders, no window extension, 1σ cut and tier, diagonal errors, no hot-band cap); the windows are shared |
 
 Each variant is a complete, independent run under `data/emission/`, `results/` and `fig/` for the main variant and under
 `studies/<variant>/` for every other one.  A variant's `hash`
@@ -233,10 +239,12 @@ The driver picks each study's partners by `Variant.role` (`main`, `flags`, `dist
 | `data/emission/<target>_<ap>km_points.csv` | point-level spectrum: `flux`/`err` in the fit space, `emis_*` and `emis_raw_*`, `role`, flags |
 | `results/gas_fit.csv` | **one row per (target, phase): Q, errors, limits, coverage, n_eff, mixing ratios, caveats** |
 | `results/gas_fit_lines/` | dense model curves and per-channel residuals per fit |
-| `results/continuum_summary.csv`, `skipped_groups.csv`, `not_fitted.csv`, `apertures.csv` (with the S/N score, the best aperture, the annulus radius and any relaxed bound), `run.meta.json` | provenance |
+| `results/continuum_summary.csv`, `skipped_groups.csv`, `not_fitted.csv`, `apertures.csv` (one row per target and phase: radius, reason, coverage, phase geometry), `run.meta.json` | provenance |
 | `data/studies/<v>/`, `results/studies/<v>/`, `fig/studies/<v>/` | the same products for every study variant |
 | `results/studies/flag_policy_*.csv`, `distcorr_effect_*.csv`; `fig/studies/*.png` | the cross-variant studies |
+| `results/studies/method_matrix/matrix.csv` | the continuum/fit method matrix of 2026-09-14 (`notebooks/method_matrix.py`) |
 | `results/placeholders.csv` | the placeholder registry as a table |
+| `results/afrho_ztf.csv` | *optional* -- the ZTF dust context per (target, phase), written by `../scripts/attach_afrho_ztf.py` from the `ztf-comet` project; when present, `dataio.attach_afrho_ztf` appends its summary columns to every `gas_fit.csv` and to `phase_map.csv` |
 
 `phase` in every file is the regrouped phase; `epoch` is its 28-day parent.
 Pin `dtype={"target": str}` when reading: `2022E2` and `2024E1` are valid
@@ -258,6 +266,7 @@ scientific notation.
 | `v_hel_mean_kms`, `swings_CO` | mean heliocentric radial velocity of the fitted channels (positive receding) and the mean CO Swings factor g(v_h)/g(0) applied |
 | `n_flag_a`, `n_flag_b` | flagged channels that entered the fit |
 | `caveats` | the interpretive warnings, joined by `;` |
+| `afrho_rh_au`, `afrho_10k_cm`, `afrho_10k_err_cm`, `afrho_10k_method`, `afrho_20k_*`, `afrho_note` | *present only with `results/afrho_ztf.csv`*: ZTF r-band A(0°)fρ (cm, 1σ) at the phase's mean r_h for ρ = 10 000 / 20 000 km and how it was obtained -- `direct` (ZTF frames inside the SPHEREx window), `trend` (the fitted heliocentric law of that orbital phase), `trend_extrap` (the law extended ≤ 0.1 dex), `none` (`afrho_note` says why); a row whose phase geometry moved since the table was built reads `stale` |
 
 ## Placeholders
 

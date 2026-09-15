@@ -73,8 +73,14 @@ def _robust_ylim(y, frac=0.02, pad=0.12):
     return min(lo - m, 0.0), hi + m
 
 
+def _fmt_r_ap(r_ap_km) -> str:
+    """``20000 -> "20,000 km"``; a set of per-phase apertures -> ``"20,000 / 60,000 km"``."""
+    r = np.atleast_1d(np.asarray(r_ap_km, float))
+    return " / ".join(f"{x:,.0f}" for x in np.unique(r)) + " km"
+
+
 def plot_phase_comparison(target: str, ep: pd.DataFrame, spec: pd.DataFrame,
-                          r_ap_km: float, flux_col: str = "flux_raw"):
+                          r_ap_km, flux_col: str = "flux_raw"):
     """
     Before/after grouping figure: (r_h vs time, raw spectrum) x (epoch, phase).
 
@@ -122,7 +128,7 @@ def plot_phase_comparison(target: str, ep: pd.DataFrame, spec: pd.DataFrame,
         ax_s.axhline(0, color="k", lw=1.0, ls=":")
         ax_s.set(xlabel=r"wavelength [$\mu$m]", ylabel="source sum [mJy]", xlim=(0.7, 5.05),
                  ylim=(ylo, yhi))
-        ax_s.set_title(f"raw spectrum,  $r_{{ap}}$ = {r_ap_km:,.0f} km,  N = {len(spec)}"
+        ax_s.set_title(f"raw spectrum,  $r_{{ap}}$ = {_fmt_r_ap(r_ap_km)},  N = {len(spec)}"
                        + (f"  ({n_clip} off scale)" if n_clip else ""), pad=12)
     n_old, n_new = ep.epoch.nunique(), ep.phase.nunique()
     arc = "  split at perihelion" if k_peri is not None else ""
@@ -372,13 +378,31 @@ def _aperture_class(r_ap_km) -> np.ndarray:
     return np.where(r <= 20000, 0, np.where(r <= 40000, 1, 2))
 
 
-_AP_CLASS = (("o", "≤ 20 000 km"), ("s", "22 000–40 000 km"), ("D", "≥ 60 000 km"))
+_AP_MARKERS = ("o", "s", "D")
+
+
+def _aperture_class_labels(r_ap_km) -> list:
+    """One label per class from the radii actually present: ``"20 000 km"`` when the class holds a
+    single radius (the fixed rule), ``"22 000–40 000 km"`` when it holds several (the S/N rule)."""
+    r = np.asarray(r_ap_km, float)
+    cls = _aperture_class(r)
+    labels = []
+    for k in range(3):
+        rk = np.unique(r[cls == k])
+        if len(rk) == 0:
+            labels.append(("≤ 20 000 km", "22 000–40 000 km", "≥ 60 000 km")[k])
+        elif len(rk) == 1:
+            labels.append(f"{rk[0]:,.0f} km")
+        else:
+            labels.append(f"{rk.min():,.0f}–{rk.max():,.0f} km")
+    return labels
 
 
 def plot_summary_Q(fits: pd.DataFrame, title: str = ""):
     """Q vs mean r_h per species: ≥ 3σ detections filled, marginal (1–3σ) hollow, 3σ limits grey;
     the marker shape is the aperture class."""
     fig, axes = plt.subplots(1, 3, figsize=(24, 9))
+    _AP_CLASS = list(zip(_AP_MARKERS, _aperture_class_labels(fits.r_ap_km)))
     for ax, s in zip(axes, SPECIES):
         det = fits[(fits[f"Q_{s}_status"] == "detected") & (fits[f"Q_{s}_n_eff"] >= 2)]
         mar = fits[fits[f"Q_{s}_status"] == "marginal"]
@@ -542,7 +566,7 @@ def save_grouping_figures(epochs: Dict[str, pd.DataFrame], group_map: pd.DataFra
                           assignment: pd.DataFrame, aperture_cfg, variant: Variant,
                           max_targets: Optional[int] = None) -> List[Path]:
     """Per-target before/after grouping figures plus the catalog summary."""
-    from .dataio import aperture_for, load_apphot, select_spectrum
+    from .dataio import load_apphot, phase_spectra
     from .grouping import group_summary
     apply_rcparams()
     out_dir = _dir.FIG_DIR / "phase_group"
@@ -550,11 +574,12 @@ def save_grouping_figures(epochs: Dict[str, pd.DataFrame], group_map: pd.DataFra
     for i, (t, ep) in enumerate(epochs.items()):
         if max_targets and i >= max_targets:
             break
-        r_ap, lab, _ = aperture_for(t, aperture_cfg)
-        spec = select_spectrum(load_apphot(t), lab, variant, assignment[assignment.target == t])
+        apt, parts = phase_spectra(t, aperture_cfg, variant, assignment)
+        spec = pd.concat([s for _, s in parts], ignore_index=True).sort_values("wl") if parts \
+            else pd.DataFrame()
         if len(spec) == 0:
             continue
-        fig = plot_phase_comparison(t, ep, spec, r_ap)
+        fig = plot_phase_comparison(t, ep, spec, sorted(apt.r_ap_km.unique()))
         written.append(savefig(fig, out_dir / f"{t}_phase_group.png", dpi=150))
     rows = [r for t, ep in epochs.items() for r in group_summary(t, ep)]
     g = pd.DataFrame(rows)
@@ -570,8 +595,7 @@ def save_variant_figures(variant: Variant, assignment: pd.DataFrame,
     """Continuum validation grids and emission-model figures for one variant."""
     from .analysis import load_fits
     from .continuum import insufficient, process_group
-    from .dataio import (aperture_label, aperture_for, load_apphot, load_fit_input,
-                         select_spectrum)
+    from .dataio import aperture_label, load_fit_input, phase_spectra
     from .fitting import fit_production_rates, model_curves
     from .config import ModelParams
     apply_rcparams()
@@ -581,9 +605,9 @@ def save_variant_figures(variant: Variant, assignment: pd.DataFrame,
     n = 0
     targets = sorted(assignment.target.unique())
     for t in targets:
-        r_ap, lab, _ = aperture_for(t, variant.aperture)
-        spec = select_spectrum(load_apphot(t), lab, variant, assignment[assignment.target == t])
-        for ph, raw in spec.groupby("phase"):
+        _, parts = phase_spectra(t, variant.aperture, variant, assignment)
+        for r_ap, raw in parts:
+            ph = int(raw.phase.iloc[0])
             raw = raw.reset_index(drop=True)
             if insufficient(raw, variant.continuum) is not None:
                 continue

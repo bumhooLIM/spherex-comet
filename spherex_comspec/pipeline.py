@@ -26,9 +26,9 @@ from . import directory as _dir
 from .config import (EMISSION_DTYPES, MAIN_VARIANT, ApertureConfig, FitConfig, GroupingConfig,
                      ModelParams, Variant)
 from .continuum import insufficient, n_in_emission, process_group
-from .dataio import (PhaseAssignment, aperture_choice, list_catalog, list_targets, load_apphot,
+from .dataio import (PhaseAssignment, aperture_table, attach_afrho_ztf, list_catalog, list_targets, load_apphot,
                      load_fit_input, save_emission, save_fit_lines, save_fit_table,
-                     select_spectrum, slug)
+                     select_spectrum)
 from .fitting import fit_production_rates, model_curves
 from .grouping import regroup_all
 from .logging_utils import get_logger, utcnow_iso
@@ -51,6 +51,7 @@ def run_grouping(targets: Optional[Sequence[str]] = None,
     """
     cfg = cfg or GroupingConfig()
     assignment, group_map, cuts, epochs = regroup_all(targets, cfg)
+    group_map = attach_afrho_ztf(group_map)                  # ZTF dust context, when the table exists
     if write:
         p1, p2 = PhaseAssignment.save(assignment, group_map)
         _dir.ensure_dirs()
@@ -60,13 +61,14 @@ def run_grouping(targets: Optional[Sequence[str]] = None,
     return assignment, group_map, cuts, epochs
 
 
-def choose_apertures(targets: Sequence[str], cfg: ApertureConfig) -> pd.DataFrame:
-    """One aperture per target, with the evidence that justified it (``dataio.aperture_choice``)."""
-    rows = []
-    for t in targets:
-        c = aperture_choice(t, cfg)
-        rows.append(dict(target=slug(t), **c))
-    return pd.DataFrame(rows)
+def choose_apertures(targets: Sequence[str], cfg: ApertureConfig,
+                     assignment: Optional[pd.DataFrame] = None) -> pd.DataFrame:
+    """
+    The aperture of every (target, phase), with the evidence that justified it
+    (``dataio.aperture_table``).  Without an assignment each target is one phase (``-1``).
+    """
+    tables = [aperture_table(t, cfg, assignment) for t in targets]
+    return pd.concat(tables, ignore_index=True) if tables else pd.DataFrame()
 
 
 # --------------------------------------------------------------------------- one variant
@@ -130,46 +132,53 @@ def run_variant(variant: Variant, targets: Optional[Sequence[str]] = None,
              "distcorr" if variant.use_distcorr else "physical", len(targets))
 
     # ---- apertures ------------------------------------------------------------
-    apertures = choose_apertures(targets, variant.aperture)
+    apertures = choose_apertures(targets, variant.aperture, assignment)
     space = "distcorr" if variant.use_distcorr else "physical"
 
     # ---- continuum subtraction ---------------------------------------------------
+    # One aperture per phase (2026-09-14): the rows of a target are read once, and each
+    # distinct aperture label selects its own spectrum for the phases assigned to it.
     skipped, summaries = [], []
-    for k, row in enumerate(apertures.itertuples(index=False), start=1):
-        df = load_apphot(row.target)
-        spec = select_spectrum(df, row.ap_label, variant,
-                               assignment[assignment.target == row.target])
-        rej = spec.attrs["rejection"]
+    by_target = list(apertures.groupby("target", sort=False))
+    for k, (t, ap_t) in enumerate(by_target, start=1):
+        df = load_apphot(t)
+        a_t = assignment[assignment.target == t]
         target_sums, target_pts = [], []
-        # A phase that the flag policy emptied entirely never reaches the groupby below; it is
-        # still a skipped group and must be counted as one, or the census under-reports the cut.
-        all_phases = set(assignment.loc[assignment.target == row.target, "phase"].unique())
-        for ph in sorted(all_phases - set(spec.phase.unique())):
-            skipped.append(dict(target=row.target, r_ap_km=row.r_ap_km, phase=int(ph),
-                                n_points=0, n_emission=0, reason="0 usable points (all rows rejected)"))
-        for ph, raw in spec.groupby("phase", sort=True):
-            raw = raw.reset_index(drop=True)
-            why = insufficient(raw, variant.continuum)
-            if why is not None:
-                skipped.append(dict(target=row.target, r_ap_km=row.r_ap_km, phase=int(ph),
-                                    n_points=len(raw), n_emission=n_in_emission(raw), reason=why))
-                continue
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore")
-                out = process_group(raw, row.target, row.r_ap_km, int(ph),
-                                    int(raw.epoch.iloc[0]), variant.continuum, space)
-            target_sums.append(out["summary"])
-            target_pts.append(out["points"])
+        for lab, ap_rows in ap_t.groupby("ap_label", sort=False):
+            r_ap_km = float(ap_rows.r_ap_km.iloc[0])
+            phases = set(int(x) for x in ap_rows.phase)
+            spec = select_spectrum(df, lab, variant, a_t)
+            rej = spec.attrs["rejection"]
+            spec = spec[spec.phase.isin(phases)]
+            # A phase that the flag policy (or the aperture's coverage) emptied entirely never
+            # reaches the groupby below; it is still a skipped group and must be counted as one,
+            # or the census under-reports the cut.
+            for ph in sorted(phases - set(spec.phase.unique())):
+                skipped.append(dict(target=t, r_ap_km=r_ap_km, phase=int(ph), n_points=0,
+                                    n_emission=0, reason="0 usable points (all rows rejected)"))
+            for ph, raw in spec.groupby("phase", sort=True):
+                raw = raw.reset_index(drop=True)
+                why = insufficient(raw, variant.continuum)
+                if why is not None:
+                    skipped.append(dict(target=t, r_ap_km=r_ap_km, phase=int(ph), n_points=len(raw),
+                                        n_emission=n_in_emission(raw), reason=why))
+                    continue
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    out = process_group(raw, t, r_ap_km, int(ph), int(raw.epoch.iloc[0]),
+                                        variant.continuum, space)
+                summ = out["summary"]
+                summ["n_rejected_badphot"] = rej["n_badphot"]
+                summ["n_rejected_flag"] = rej["n_flag"]
+                target_sums.append(summ)
+                target_pts.append(out["points"])
         if target_sums:
-            summ = pd.concat(target_sums, ignore_index=True)
-            summ["n_rejected_badphot"] = rej["n_badphot"]
-            summ["n_rejected_flag"] = rej["n_flag"]
-            summaries.append(summ)
+            summaries.append(pd.concat(target_sums, ignore_index=True))
             if write:
-                save_emission(variant.name, summ, pd.concat(target_pts, ignore_index=True))
-        if progress_every and (k % progress_every == 0 or k == len(apertures)):
+                save_emission(variant.name, summaries[-1], pd.concat(target_pts, ignore_index=True))
+        if progress_every and (k % progress_every == 0 or k == len(by_target)):
             log.info("[%s] continuum %d/%d  (%d band-rows, %d groups skipped)", variant.name, k,
-                     len(apertures), sum(len(s) for s in summaries), len(skipped))
+                     len(by_target), sum(len(s) for s in summaries), len(skipped))
 
     cont = pd.concat(summaries, ignore_index=True) if summaries else pd.DataFrame()
     skipped = pd.DataFrame(skipped)
@@ -202,7 +211,7 @@ def run_variant(variant: Variant, targets: Optional[Sequence[str]] = None,
                 rows.append(row)
             except Exception as exc:                        # noqa: BLE001 - recorded, not hidden
                 not_fitted.append(dict(target=r.target, phase=int(r.phase), reason=repr(exc)[:120]))
-    fits = pd.DataFrame(rows)
+    fits = attach_afrho_ztf(pd.DataFrame(rows), jd_col="jd_utc_mean")   # ZTF dust context, when the table exists
     not_fitted = pd.DataFrame(not_fitted)
 
     paths = {}

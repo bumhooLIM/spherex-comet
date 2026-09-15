@@ -98,11 +98,14 @@ BANDS: Tuple[Band, ...] = (
 
 #: Emission and continuum windows per band [um], as in ``continuum_subtraction.ipynb``.
 #: ``em`` is punched out of *every* continuum fit; ``cont`` bounds the sample for this band.
-#: 2026-09-12: the 2.7 um emission window starts at 2.50 um (the H2O complex begins at 2.55 um;
-#: 2.60 um lost 6.7 % of it) and the H2O and CO2 continuum windows are 0.1 um wider on both
-#: sides; the 4.3 um continuum reaches into the CO emission window, which is punched out anyway.
+#: 2026-09-14 (method matrix, ``notebooks/method_matrix.py``, decisions doc section 7.9): the
+#: 2.7 um emission window starts at 2.55 um, where the H2O template starts (2.60 um lost 6.7 % of
+#: the band; 2.50 um added signal-free channels to the fit) over the 2.30-3.00 um continuum (the
+#: 0.1 um wider 2.20-3.10 window of 2026-09-12 cost one to two clean H2O detections); the CO2
+#: continuum window makes no difference between 4.00-4.55 and 3.90-4.65 um and keeps the wider
+#: one, which reaches into the CO emission window (punched out anyway).
 BAND_WINDOWS: Dict[str, dict] = {
-    "2.7um": dict(em=(2.50, 2.80), cont=(2.20, 3.10), lam_c=2.70),
+    "2.7um": dict(em=(2.55, 2.80), cont=(2.30, 3.00), lam_c=2.70),
     "4.3um": dict(em=(4.18, 4.35), cont=(3.90, 4.65), lam_c=4.26),
     "4.7um": dict(em=(4.55, 4.90), cont=(4.40, 5.00), lam_c=4.67),
 }
@@ -112,7 +115,7 @@ ALL_EM_WINDOWS = [w["em"] for w in BAND_WINDOWS.values()]
 #: Diagnostic ranges that must be sampled before a species may be fitted at all.
 #: Falling short is a *coverage* failure, categorically different from a non-detection.
 KEY_RANGES = {
-    "H2O": dict(lo=2.50, hi=2.80, min_points=3),
+    "H2O": dict(lo=2.55, hi=2.80, min_points=3),
     "CO2": dict(lo=4.20, hi=4.30, min_points=2),
     "CO":  dict(lo=4.60, hi=4.70, min_points=2),
 }
@@ -184,29 +187,34 @@ class GroupingConfig:
 @dataclass(frozen=True)
 class ApertureConfig:
     """
-    One aperture per target, from its mean heliocentric distance.
+    The aperture a group is analysed at.
 
-    ``near_km`` inside ``rh_split_au``, ``far_km`` beyond -- the rule of
-    ``continuum_subtraction.ipynb``.  The revised photometry additionally
-    *refuses* an aperture that is smaller than the PSF or larger than the sky
-    annulus, so a rule aperture can be absent for part or all of a distant
-    target's exposures (2014 UN271 at 14.6 au has no 40 000 km measurement at
-    all).  ``min_coverage`` therefore promotes the target to the smallest
-    ``km`` aperture that exists for at least that fraction of its exposures.
+    ``rule == "fixed"`` (2026-09-14, the catalog rule): one aperture per *phase*, decided at
+    the phase's median geometry -- ``near_km`` inside ``rh_split_au``, ``far_km`` beyond; when
+    that radius is smaller than ``min_pix`` pixels at the phase's pixel scale it is enlarged
+    to ``small_km``.  Nothing else enters: no S/N score, no coverage promotion.  The revised
+    photometry refuses an aperture below the PSF FWHM (0.86-1.08 px), so the ``min_pix`` floor
+    is the stricter one and the rule aperture exists for every exposure of a phase, except
+    beyond ~9 au where even ``small_km`` is under 1.5 px (2014 UN271: coverage 50 %).
+
+    ``rule == "snr"`` (2026-09-12, study variant ``dc_ap_snr``): one aperture per target --
+    the smallest ``km`` aperture, present for ``min_coverage`` of the exposures, at least
+    ``min_psf_mult`` PSF FWHM wide and no larger than ``max_ap_frac_annulus`` of the sky
+    annulus, whose median star-free S/N is within ``snr_tol`` of the best.
+    ``rule == "rh"`` (before 2026-09-12, ``dc_rules_previous``): ``near_km`` / ``far_km`` per
+    target from its mean r_h, promoted to the smallest larger aperture covering
+    ``min_coverage`` of the exposures.
     """
 
     rh_split_au: float = 3.0
     near_km: float = 20000.0
     far_km: float = 40000.0
+    #: ``"fixed"``: enlarge the rule aperture to ``small_km`` when it is under ``min_pix`` pixels
+    min_pix: float = 1.5
+    small_km: float = 60000.0
     min_coverage: float = 0.95
     kind: str = "km"
-    #: ``"snr"`` (2026-09-12): among the ``km`` apertures present for ``min_coverage`` of the
-    #: exposures, at least ``min_psf_mult`` PSF FWHM wide and no larger than
-    #: ``max_ap_frac_annulus`` of the sky annulus' inner radius (so the annulus stays outside
-    #: the coma the aperture measures), take the smallest one whose median S/N over the
-    #: star-free emission-window channels is within ``snr_tol`` of the best.  ``"rh"``: the previous
-    #: rule, ``near_km`` inside ``rh_split_au`` and ``far_km`` beyond, promoted for coverage.
-    rule: str = "snr"
+    rule: str = "fixed"
     snr_tol: float = 0.10
     min_psf_mult: float = 2.0
     max_ap_frac_annulus: float = 1.0 / 3.0
@@ -411,6 +419,10 @@ DEFAULT_VARIANTS: Tuple[Variant, ...] = (
             model=ModelParams(profile_source="gaussian", co_swings=False), role="fluorescence"),
     # 2026-09-12: the fit with diagonal errors (no continuum covariance) -- what GLS changes
     Variant("dc_main_diag",   BASELINE_FLAGS, use_distcorr=True, fit=FitConfig(gls=False), role="errors"),
+    # 2026-09-14: the S/N-driven aperture per target of the 2026-09-12 run, against the fixed
+    # per-phase rule of the main run
+    Variant("dc_ap_snr",      BASELINE_FLAGS, use_distcorr=True, aperture=ApertureConfig(rule="snr"),
+            role="rules"),
     # 2026-09-12: every rule of the 2026-09-11 run that a variant can carry -- r_h-based aperture,
     # fixed 3/2/2 orders without the one-sided extension, the 1 sigma negative cut and detection
     # tier, diagonal errors, no hot-band distance cap.  Windows and grouping are shared.
@@ -459,11 +471,11 @@ PLACEHOLDERS: Tuple[dict, ...] = (
               "systematic in absolute Q, ~ +/-18 % per 20 % in v_g for CO2",
          update="species-specific velocity from a literature compilation, with its citation"),
     dict(priority=4, quantity="2.7 um emission window and continuum windows",
-         value="emission 2.50-2.80 um, continuum 2.20-3.10 (H2O) and 3.90-4.65 um (CO2); an empty "
-               "continuum side is extended to 1 um from the band edge (applied 2026-09-12; was: "
-               "2.60 um edge, 2.30-3.00 and 4.00-4.55 um, no extension)",
-         role="the H2O template starts at 2.55 um; wider windows and the extension cut the "
-              "one-sided FAIL rate",
+         value="emission 2.55-2.80 um, continuum 2.30-3.00 (H2O) and 3.90-4.65 um (CO2); an empty "
+               "continuum side is extended to 1 um from the band edge (2026-09-14 method matrix; "
+               "2026-09-12 had used 2.50-2.80 over 2.20-3.10)",
+         role="the H2O template starts at 2.55 um; the window edges move the clean H2O census by "
+              "one or two; the extension adds fits",
          update="applied; re-examine the extension's linear extrapolation over up to 1 um"),
     dict(priority=5, quantity="badphot policy",
          value="drop rows with frac_badpix_ap > 0.05 (FlagPolicy.max_frac_badpix; applied 2026-09-09, "
@@ -472,16 +484,18 @@ PLACEHOLDERS: Tuple[dict, ...] = (
               "~50 % of rows.  frac_badpix_ap is in the data for a threshold instead",
          update="applied; re-examine the 0.05 threshold once the flux loss per bad pixel is characterised"),
     dict(priority=6, quantity="aperture rule",
-         value="S/N-driven per target: the smallest km aperture (>= 95 % coverage, >= 2 PSF FWHM, "
-               "<= 1/3 of the sky-annulus inner radius) within 10 % of the best median emission-window "
-               "S/N (ApertureConfig.rule = 'snr'; applied 2026-09-12; was: 20 000 / 40 000 km by r_h)",
-         role="sets the coma column the model integrates; the annulus bound keeps the background "
-              "outside the coma being measured",
-         update="applied; the dc_rules_previous variant keeps the r_h rule"),
+         value="one fixed aperture per phase: 20 000 km inside 3 au, 40 000 km beyond, enlarged to "
+               "60 000 km when the rule radius is under 1.5 px (ApertureConfig.rule = 'fixed'; applied "
+               "2026-09-14; 2026-09-12 had used an S/N-driven per-target aperture, rule = 'snr')",
+         role="sets the coma column the model integrates; Q is within 1 % of the S/N-driven "
+              "apertures, the census within a few groups (decisions doc section 7.9)",
+         update="applied; dc_ap_snr keeps the S/N rule, dc_rules_previous the r_h rule; the 3 au, "
+                "1.5 px and 60 000 km thresholds are conventions"),
     dict(priority=7, quantity="continuum polynomial orders",
          value="chosen per fit by leave-one-out cross-validation up to order 3, lowest order within "
-               "5 % of the best (ContinuumConfig.order_mode = 'cv'; applied 2026-09-12; was: fixed 3/2/2)",
-         role="the CV preferred order 1 in half of the fits of the previous run",
+               "10 % of the best (ContinuumConfig.order_mode = 'cv'; applied 2026-09-12; was: fixed 3/2/2)",
+         role="the CV preferred order 1 in half of the fits of the previous run; 5, 10 and 20 % margins "
+              "and a fixed linear continuum give the same census (2026-09-14 method matrix)",
          update="applied"),
     dict(priority=8, quantity="detection threshold",
          value="detected >= 3 sigma, marginal 1-3 sigma, limits at 3 sigma (FitConfig; applied "

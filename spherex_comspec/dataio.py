@@ -42,6 +42,7 @@ __all__ = [
     "aperture_for", "aperture_choice", "select_spectrum", "PhaseAssignment", "heliocentric_velocity",
     "emission_paths", "save_emission", "load_summary", "load_points", "list_catalog",
     "load_fit_input", "save_fit_table", "save_fit_lines", "REQUIRED_COLUMNS",
+    "attach_afrho_ztf", "AFRHO_ATTACH_COLUMNS",
 ]
 
 log = get_logger("dataio")
@@ -211,9 +212,93 @@ def exposure_table(target: str) -> pd.DataFrame:
 
 # ----------------------------------------------------------------------------- aperture
 def aperture_for(target: str, cfg: ApertureConfig) -> Tuple[float, str, float]:
-    """The single aperture a target is analysed at: ``(r_ap_km, ap_label, coverage)``."""
+    """
+    One aperture for a whole target: ``(r_ap_km, ap_label, coverage)``.
+
+    For the ``"fixed"`` rule this is the rule applied to the target as if it were a single
+    phase (its median geometry); the pipeline itself decides per phase with
+    :func:`aperture_table`.  Kept for the notebooks and the studies that compare one
+    aperture per target.
+    """
     c = aperture_choice(target, cfg)
     return float(c["r_ap_km"]), str(c["ap_label"]), float(c["coverage"])
+
+
+def _rule_fixed(cfg: ApertureConfig, r_hel: float, kmpp: float) -> Tuple[float, str]:
+    """The 2026-09-14 rule at one geometry: ``(r_ap_km, reason)``."""
+    near = r_hel < cfg.rh_split_au
+    want, reason = (cfg.near_km, "near") if near else (cfg.far_km, "far")
+    if not np.isfinite(kmpp) or kmpp <= 0 or want / kmpp < cfg.min_pix:
+        want, reason = cfg.small_km, reason + "->enlarged"
+    return float(want), reason
+
+
+def _fixed_row(km: pd.DataFrame, ex: pd.DataFrame, cfg: ApertureConfig) -> dict:
+    """Apply :func:`_rule_fixed` to the exposures ``ex`` (one phase, or a whole target)."""
+    r_hel = float(ex.r_hel.median())
+    kmpp = float(ex.pixel_scale_km.median()) if "pixel_scale_km" in ex else np.nan
+    want, reason = _rule_fixed(cfg, r_hel, kmpp)
+    rows = km[np.isclose(km.r_ap_km, want)]
+    have = set(rows.filename)
+    files = ex.filename.unique()
+    cov = float(np.mean([f in have for f in files])) if len(files) else 0.0
+    lab = str(rows.ap_label.iloc[0]) if len(rows) else f"{cfg.kind}{int(want)}"
+    return dict(r_ap_km=want, ap_label=lab, coverage=cov, rule="fixed", reason=reason,
+                n_exp=int(len(files)), r_hel_med=r_hel, r_obs_med=float(ex.r_obs.median()),
+                pixel_scale_km=kmpp, r_ap_pix=want / kmpp if np.isfinite(kmpp) and kmpp > 0 else np.nan)
+
+
+def aperture_table(target: str, cfg: ApertureConfig,
+                   assignment: Optional[pd.DataFrame] = None) -> pd.DataFrame:
+    """
+    The aperture of every phase of a target: one row per phase.
+
+    ``cfg.rule == "fixed"`` decides each phase on its own median r_h and pixel scale
+    (:class:`ApertureConfig`); the ``"snr"`` and ``"rh"`` rules decide once per target
+    (:func:`aperture_choice`) and the choice is repeated for every phase.  Without an
+    ``assignment`` the whole target is one phase, labelled ``-1``.
+
+    Returns
+    -------
+    DataFrame
+        ``target, phase, r_ap_km, ap_label, coverage, rule, reason, n_exp, r_hel_med,
+        r_obs_med, pixel_scale_km, r_ap_pix`` (+ the S/N evidence for ``"snr"``).
+        ``coverage`` is the fraction of the phase's exposures measured at that aperture.
+    """
+    df = load_apphot(target)
+    t = slug(target)
+    ex = df.drop_duplicates("filename")[[c for c in ("filename", "r_hel", "r_obs", "pixel_scale_km",
+                                                     "psf_fwhm_pix") if c in df.columns]]
+    if assignment is not None:
+        a = assignment[assignment.target == t][["filename", "phase"]]
+        ex = ex.merge(a, on="filename", how="inner")
+        ex["phase"] = ex.phase.astype(int)
+    else:
+        ex = ex.assign(phase=-1)
+    km = df[df.ap_kind == cfg.kind]
+    rows = []
+    if cfg.rule == "fixed":
+        for ph, e in ex.groupby("phase", sort=True):
+            r = _fixed_row(km, e, cfg)
+            if r["coverage"] < cfg.min_coverage:
+                log.warning("%s phase %d: %g km (%s) is measured for %.0f %% of the exposures "
+                            "(%.2f px)", t, ph, r["r_ap_km"], r["reason"], 100 * r["coverage"],
+                            r["r_ap_pix"])
+            rows.append(dict(target=t, phase=int(ph), **r))
+    elif cfg.rule in ("snr", "rh"):
+        c = aperture_choice(target, cfg)
+        have = set(km.loc[np.isclose(km.r_ap_km, c["r_ap_km"]), "filename"])
+        for ph, e in ex.groupby("phase", sort=True):
+            files = e.filename.unique()
+            r = dict(c, coverage=float(np.mean([f in have for f in files])), reason=c.get("relaxed", ""),
+                     n_exp=int(len(files)), r_hel_med=float(e.r_hel.median()),
+                     r_obs_med=float(e.r_obs.median()),
+                     pixel_scale_km=float(e.pixel_scale_km.median()) if "pixel_scale_km" in e else np.nan)
+            r["r_ap_pix"] = r["r_ap_km"] / r["pixel_scale_km"] if r["pixel_scale_km"] > 0 else np.nan
+            rows.append(dict(target=t, phase=int(ph), **r))
+    else:
+        raise ValueError(f"unknown aperture rule {cfg.rule!r} (fixed | snr | rh)")
+    return pd.DataFrame(rows)
 
 
 def _coverage_table(df: pd.DataFrame, cfg: ApertureConfig) -> pd.DataFrame:
@@ -252,9 +337,11 @@ def _rule_rh(target: str, df: pd.DataFrame, cov: pd.DataFrame, cfg: ApertureConf
 
 def aperture_choice(target: str, cfg: ApertureConfig) -> dict:
     """
-    The single aperture a target is analysed at, with the evidence for the choice.
+    One aperture for a whole target, with the evidence for the choice.
 
-    ``cfg.rule == "snr"`` (default since 2026-09-12): every ``km`` aperture present for at
+    ``cfg.rule == "fixed"`` (2026-09-14): the per-phase rule of :func:`aperture_table` applied
+    to the target's median geometry (``reason`` says ``near``/``far`` and ``->enlarged``).
+    ``cfg.rule == "snr"`` (2026-09-12): every ``km`` aperture present for at
     least ``cfg.min_coverage`` of the exposures, at least ``cfg.min_psf_mult`` PSF FWHM in
     radius, and no larger than ``cfg.max_ap_frac_annulus`` times the sky annulus' inner
     radius (so the background is measured outside the coma the aperture integrates) is a
@@ -275,11 +362,14 @@ def aperture_choice(target: str, cfg: ApertureConfig) -> dict:
         r_ap_km_best, r_in_km, n_candidates, relaxed``.
     """
     df = load_apphot(target)
+    if cfg.rule == "fixed":
+        ex = df.drop_duplicates("filename")
+        return _fixed_row(df[df.ap_kind == cfg.kind], ex, cfg)
     cov = _coverage_table(df, cfg)
     if cfg.rule == "rh":
         return _rule_rh(target, df, cov, cfg)
     if cfg.rule != "snr":
-        raise ValueError(f"unknown aperture rule {cfg.rule!r} (snr | rh)")
+        raise ValueError(f"unknown aperture rule {cfg.rule!r} (fixed | snr | rh)")
 
     # annulus inner radius at the comet [km], the same for every aperture of an exposure
     r_in_km = float(np.nanmedian(df.r_in_pix * df.pixel_scale_km)) \
@@ -346,6 +436,26 @@ def aperture_choice(target: str, cfg: ApertureConfig) -> dict:
                 r_ap_km_best=float(cand.loc[cand.snr_median.idxmax(), "r_ap_km"]),
                 r_in_km=r_in_km, n_candidates=int(len(cand)), relaxed=relaxed,
                 frac_flag_ab=float(row.frac_flag_ab))
+
+
+def phase_spectra(target: str, cfg: ApertureConfig, variant, assignment: pd.DataFrame):
+    """
+    The spectrum of every phase of a target at its own aperture.
+
+    Returns ``(aperture_table, [(r_ap_km, spectrum), ...])`` -- one spectrum per phase, in
+    phase order, each the :func:`select_spectrum` rows of the phase's aperture.
+    """
+    apt = aperture_table(target, cfg, assignment)
+    df = load_apphot(target)
+    a_t = assignment[assignment.target == slug(target)]
+    out = {}
+    for lab, rows in apt.groupby("ap_label", sort=False):
+        spec = select_spectrum(df, lab, variant, a_t)
+        for ph in rows.phase:
+            s = spec[spec.phase == int(ph)]
+            if len(s):
+                out[int(ph)] = (float(rows.r_ap_km.iloc[0]), s.reset_index(drop=True))
+    return apt, [out[ph] for ph in sorted(out)]
 
 
 # ------------------------------------------------------------------------- flag policy
@@ -463,8 +573,17 @@ def save_emission(variant: str, summary: pd.DataFrame, points: pd.DataFrame) -> 
     """
     if summary.empty:
         return None, None
+    # files are keyed on (target, aperture); a target whose phases use two apertures
+    # (2026-09-14) writes one pair of files per aperture
+    aps = np.unique(summary.r_ap_km.to_numpy(float))
+    if len(aps) > 1:
+        out = None
+        for r in aps:
+            out = save_emission(variant, summary[np.isclose(summary.r_ap_km, r)],
+                                points[np.isclose(points.r_ap_km, r)])
+        return out
     target = str(summary.target.iloc[0])
-    r_ap = float(summary.r_ap_km.iloc[0])
+    r_ap = float(aps[0])
     p_sum, p_pts = emission_paths(variant, target, r_ap)
     p_sum.parent.mkdir(parents=True, exist_ok=True)
 
@@ -548,6 +667,66 @@ def load_fit_input(variant: str, target: str, r_ap_km, phase: int,
     if out.empty:
         raise ValueError(f"{target} phase {phase}: no finite channels")
     return out.sort_values("wl").reset_index(drop=True)
+
+
+# ------------------------------------------------------------------------------ ZTF dust context
+#: the columns carried into the per-(target, phase) summaries; the rest of ``afrho_ztf.csv``
+#: (1-sigma ranges, point counts, grades, per-aperture notes) stays in that table
+AFRHO_ATTACH_COLUMNS = ["afrho_rh_au", "afrho_10k_cm", "afrho_10k_err_cm", "afrho_10k_method",
+                        "afrho_20k_cm", "afrho_20k_err_cm", "afrho_20k_method", "afrho_note"]
+STALE_NOTE = ("stale: the phase's geometry changed since afrho_ztf.csv was built; rerun "
+              "ztf-comet/notebooks/afrho_trends.py and scripts/attach_afrho_ztf.py")
+
+
+def attach_afrho_ztf(df: pd.DataFrame, table: Optional[pd.DataFrame] = None,
+                     rh_col: str = "r_hel_mean", jd_col: Optional[str] = None,
+                     rh_tol: float = 0.05, jd_tol_days: float = 45.0) -> pd.DataFrame:
+    """
+    Attach the ZTF dust context -- r-band A(0°)fρ at the phase's mean r_h -- to a
+    per-(target, phase) table such as ``gas_fit.csv`` or ``phase_map.csv``.
+
+    ``results/afrho_ztf.csv`` (one row per target and phase; ``scripts/attach_afrho_ztf.py``
+    builds it from the ``ztf-comet`` project's ``spherex_afrho.csv``) is matched on
+    (target, phase) and :data:`AFRHO_ATTACH_COLUMNS` are appended.  The estimate was made at
+    the r_h and epoch the phase had when that table was built, so a row whose *rh_col* now
+    differs by more than *rh_tol* (fractional), or whose *jd_col* by more than *jd_tol_days*,
+    belongs to a regrouped phase: its values are blanked and ``afrho_note`` says ``stale``.
+    Existing ``afrho_*`` columns are dropped first, so the call is idempotent, and *df* comes
+    back unchanged when no table exists -- the context is optional.
+    """
+    if table is None:
+        if not _dir.AFRHO_ZTF_CSV.is_file():
+            return df
+        table = pd.read_csv(_dir.AFRHO_ZTF_CSV, dtype={"target": str})
+    if df is None or len(df) == 0 or "target" not in df or "phase" not in df:
+        return df
+    out = df.drop(columns=[c for c in df.columns if str(c).startswith("afrho_")])
+    cols = [c for c in AFRHO_ATTACH_COLUMNS if c in table.columns]
+    extra = ["afrho_jd"] if jd_col and "afrho_jd" in table.columns else []
+    t = table[["target", "phase", *cols, *extra]].drop_duplicates(["target", "phase"]).copy()
+    t["phase"] = t["phase"].astype(int)
+    idx = out.index
+    out = out.assign(phase=out["phase"].astype(int)).merge(t, on=["target", "phase"], how="left")
+    out.index = idx
+    stale = pd.Series(False, index=out.index)
+    if rh_col in out and "afrho_rh_au" in out:
+        ref = out["afrho_rh_au"].astype(float)
+        stale |= np.isfinite(ref) & ((out[rh_col].astype(float) - ref).abs() > rh_tol * ref)
+    if extra and jd_col in out:
+        ref = out["afrho_jd"].astype(float)
+        stale |= np.isfinite(ref) & ((out[jd_col].astype(float) - ref).abs() > jd_tol_days)
+    if extra:
+        out = out.drop(columns=extra)
+    if stale.any():
+        log.warning("attach_afrho_ztf: %d rows whose phase geometry moved since afrho_ztf.csv was "
+                    "built; values blanked", int(stale.sum()))
+        for c in cols:
+            if c == "afrho_note":
+                continue
+            out.loc[stale, c] = "" if c.endswith("_method") else np.nan
+        if "afrho_note" in out:
+            out.loc[stale, "afrho_note"] = STALE_NOTE
+    return out
 
 
 # ------------------------------------------------------------------------------ results

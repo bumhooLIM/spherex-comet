@@ -226,16 +226,18 @@ def test_select_order_prefers_the_simplest_adequate_polynomial():
 
 
 def test_one_sided_continuum_is_extended_to_bracket_the_band():
-    from spherex_comspec.config import ContinuumConfig
+    from spherex_comspec.config import BAND_WINDOWS, ContinuumConfig
     from spherex_comspec.continuum import fit_continuum
     # channels only red of the 2.7 um band inside the standard window, plus a blue stretch at
     # 1.9-2.15 um that only the extension can reach
-    wl = np.concatenate([np.linspace(1.90, 2.15, 8), np.linspace(2.82, 3.08, 8)])
+    em_lo, em_hi = BAND_WINDOWS["2.7um"]["em"]
+    c_hi = BAND_WINDOWS["2.7um"]["cont"][1]
+    wl = np.concatenate([np.linspace(1.90, 2.15, 8), np.linspace(em_hi + 0.02, c_hi - 0.02, 8)])
     raw = pd.DataFrame(dict(wl=wl, flux=1.0 + 0.1 * (wl - 2.7), err=np.full(len(wl), 0.02),
                             distcorr_factor=1.0))
     ext = fit_continuum(raw, "2.7um", ContinuumConfig())
     assert ext["extended"] == "blue" and ext["n_blue"] > 0 and ext["bracketed"]
-    assert abs(ext["cont"][0] - 1.50) < 1e-9
+    assert abs(ext["cont"][0] - (em_lo - 1.0)) < 1e-9
     off = fit_continuum(raw, "2.7um", ContinuumConfig(one_sided_extend_um=None))
     assert off["n_blue"] == 0 and not off["bracketed"] and off["order_used"] == 1
 
@@ -346,15 +348,32 @@ def test_delta_rule_bounds_every_group():
 def test_aperture_rules():
     if not (_dir.APPHOT_DIR / "2014UN271.csv").is_file():
         return
-    from spherex_comspec.dataio import aperture_for, aperture_choice
-    # the previous rule, kept for the dc_rules_previous variant
+    from spherex_comspec.dataio import aperture_for, aperture_choice, aperture_table
+    # the fixed rule (2026-09-14): 20 000 km inside 3 au, 40 000 beyond, 60 000 when the rule
+    # aperture is under 1.5 px; decided per phase at the phase's median geometry
+    r, lab, cov = aperture_for("24P", ApertureConfig())
+    assert r == 20000.0 and lab == "km20000" and cov >= 0.99
+    r, lab, cov = aperture_for("2014UN271", ApertureConfig())     # 60 000 km is 0.9 px at 14 au
+    assert r == 60000.0 and lab == "km60000"
+    from spherex_comspec.dataio import PhaseAssignment
+    if PhaseAssignment.path().is_file():
+        a = PhaseAssignment.load()
+        t = aperture_table("2023A3", ApertureConfig(), a)         # 3.6-7.4 au: 40 000 -> 60 000 km far out
+        assert len(t) == a[a.target == "2023A3"].phase.nunique()
+        big = t[t.r_ap_km == 60000.0]
+        assert (t.r_hel_med >= 3).all() and (big.reason == "far->enlarged").all()
+        assert (40000.0 / big.pixel_scale_km < 1.5).all() and (40000.0 / t[t.r_ap_km == 40000.0].pixel_scale_km >= 1.5).all()
+        t = aperture_table("10P", ApertureConfig(), a)             # 1.6-3.7 au: both sides of 3 au
+        assert set(t.r_ap_km) <= {20000.0, 40000.0} and (t.coverage >= 0.99).all()
+        assert ((t.r_ap_km == 20000.0) == (t.r_hel_med < 3.0)).all()
+    # the previous rules, kept for the study variants
     r, lab, cov = aperture_for("2014UN271", ApertureConfig(rule="rh"))
     assert r == 80000.0 and cov >= 0.95
     r, lab, cov = aperture_for("24P", ApertureConfig(rule="rh"))
     assert r == 20000.0 and cov >= 0.99
     # the S/N rule respects coverage, the PSF and the annulus bound; 2022 R3 has negative scores
     for t in ("24P", "10P", "2014UN271", "2022R3"):
-        c = aperture_choice(t, ApertureConfig())
+        c = aperture_choice(t, ApertureConfig(rule="snr"))
         assert c["coverage"] >= 0.95 and c["r_ap_km"] > 0
         if c["rule"] == "snr" and not c["relaxed"] and np.isfinite(c["r_in_km"]):
             assert c["r_ap_km"] <= c["r_in_km"] / 3 + 1e-6
@@ -395,6 +414,32 @@ def test_continuum_round_trips_from_its_saved_columns():
         assert np.allclose(sig, d.cont_err_mjy, rtol=1e-8, atol=1e-12)
         # physical-space emission is the corrected one divided by the per-channel factor
         assert np.allclose(d.emis_raw_mjy * d.distcorr_factor, d.emis_mjy, rtol=1e-10)
+
+
+# --------------------------------------------------------------------- ZTF dust context
+def test_attach_afrho_ztf_is_idempotent_and_blanks_moved_phases():
+    from spherex_comspec.dataio import attach_afrho_ztf
+    df = pd.DataFrame(dict(target=["24P", "24P", "2P"], phase=[1, 2, 1], r_hel_mean=[1.9, 1.5, 4.0],
+                           jd_utc_mean=[2460900.0, 2461000.0, 2460950.0]))
+    table = pd.DataFrame(dict(target=["24P", "24P"], phase=[1, 2], afrho_rh_au=[1.9, 1.2], afrho_jd=[2460901.0, 2461000.0],
+                              afrho_10k_cm=[8.0, 100.0], afrho_10k_err_cm=[1.0, 10.0],
+                              afrho_10k_method=["direct", "trend"], afrho_20k_cm=[np.nan, 110.0],
+                              afrho_20k_err_cm=[np.nan, 12.0], afrho_20k_method=["none", "trend"],
+                              afrho_note=["10k: frames; 20k: no frames", "10k: law; 20k: law"]))
+    out = attach_afrho_ztf(df, table, jd_col="jd_utc_mean")
+    assert out.loc[0, "afrho_10k_cm"] == 8.0 and np.isnan(out.loc[0, "afrho_20k_cm"])
+    assert out.loc[0, "afrho_20k_method"] == "none"
+    # phase 2's r_h moved from 1.2 to 1.5 au since the table was built: blanked, not carried
+    assert np.isnan(out.loc[1, "afrho_10k_cm"]) and out.loc[1, "afrho_note"].startswith("stale")
+    assert np.isnan(out.loc[2, "afrho_10k_cm"])                         # no ZTF row for 2P
+    assert "afrho_jd" not in out.columns
+    again = attach_afrho_ztf(out, table, jd_col="jd_utc_mean")
+    assert list(again.columns) == list(out.columns) and again.equals(out)
+    # an epoch that moved by more than the tolerance is stale even at the same r_h
+    moved = df.assign(jd_utc_mean=[2461100.0, 2461000.0, 2460950.0])
+    assert attach_afrho_ztf(moved, table, jd_col="jd_utc_mean").loc[0, "afrho_note"].startswith("stale")
+    # without a table the frame comes back untouched
+    assert attach_afrho_ztf(df, pd.DataFrame(columns=["target", "phase"])).shape[1] == df.shape[1]
 
 
 if __name__ == "__main__":
