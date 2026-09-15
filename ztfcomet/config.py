@@ -376,3 +376,38 @@ def get_target(name: str) -> Target:
             return target
     return Target(name=key, designation=str(name),
                   note="Not in TARGETS; designation resolved against Horizons.")
+
+
+# --------------------------------------------------------------------------- SPHEREx epochs
+#: Per-(target, SPHEREx phase) adjustments of the Af-rho estimate at the SPHEREx epochs
+#: (``activity.afrho_at_epoch`` through ``scripts/ztf/afrho_trends.py``), from the review memo
+#: of 2026-09-15 (``doc/comspec/case_revisions.md``).  Keys are ``(target, phase)``; the values
+#: are keyword arguments of :func:`ztfcomet.activity.afrho_at_epoch` plus a ``memo`` that is
+#: appended to the estimate's ``note``:
+#:
+#: * ``leg``: evaluate the epoch with the fitted law of this leg whatever side of T_p it falls
+#:   on -- 210P was observed by ZTF only after perihelion, and the memo asks for its four
+#:   inbound SPHEREx phases to be read off the outbound law (a symmetric-activity assumption,
+#:   said so in the note);
+#: * ``extrap_grades``: laws that may be extrapolated -- 47P's rising law is grade D (a 0.09 au
+#:   baseline) and S1 lies 0.005 dex beyond it; the memo asks for the extrapolation;
+#: * ``exclude_outburst``: frames inside a detected outburst window do not enter the direct
+#:   (in-window) mean -- 217P S1 had two of its five frames at the start of the 2.30 au
+#:   outburst, which overestimated the quiescent value.
+AFRHO_EPOCH_OVERRIDES = {
+    ("47P", 1): dict(extrap_grades=("A", "B", "C", "D"),
+                     memo="memo 2026-09-15: extrapolate the (grade D) rising law to S1"),
+    ("210P", 1): dict(leg="outbound", memo="memo 2026-09-15: inbound epoch read off the outbound law"),
+    ("210P", 2): dict(leg="outbound", memo="memo 2026-09-15: inbound epoch read off the outbound law"),
+    ("210P", 3): dict(leg="outbound", memo="memo 2026-09-15: inbound epoch read off the outbound law"),
+    ("210P", 4): dict(leg="outbound", memo="memo 2026-09-15: inbound epoch read off the outbound law"),
+    ("217P", 1): dict(exclude_outburst=True,
+                      memo="memo 2026-09-15: the in-window frames at the outburst start are excluded"),
+}
+
+
+def afrho_epoch_override(target, phase):
+    """The :data:`AFRHO_EPOCH_OVERRIDES` entry of ``(target, phase)`` (a copy), or ``{}``."""
+    key = ("".join(str(target).split()), int(phase))
+    return dict(AFRHO_EPOCH_OVERRIDES.get(key, {}))
+

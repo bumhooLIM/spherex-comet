@@ -63,6 +63,7 @@ def variant_census(variant: str) -> dict:
             out[f"n_det_{s}"] = len(det)
             out[f"n_robust_{s}"] = int((det[f"Q_{s}_n_eff"] >= _ROBUST_NEFF).sum())
             out[f"n_marginal_{s}"] = int((f[f"Q_{s}_status"] == "marginal").sum())
+            out[f"n_rejected_{s}"] = int((f[f"Q_{s}_status"] == "rejected").sum())
             out[f"n_ul_{s}"] = int(f[f"Q_{s}_status"].isin(["upper_limit", "negative_fit"]).sum())
             out[f"median_relerr_{s}"] = float((det[f"Q_{s}_err"] / det[f"Q_{s}"]).median()) if len(det) else np.nan
             if s == "H2O" and "h2o_source" in det:

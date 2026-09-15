@@ -181,7 +181,13 @@ class GroupingConfig:
     manual_edges: Dict[str, Dict[str, List[float]]] = field(default_factory=lambda: {
         "24P": {"in": [1.85, 1.40, 1.20], "out": []},
         "2024E1": {"in": [3.40]},
+        # 2026-09-15 memo: "regroup phases 2-3" -- one bin above 2.38 au (the former phase 1)
+        # and one below it (the former phases 2 and 3, which rule 1b had split at Delta)
+        "240P": {"in": [2.38]},
     })
+    #: targets on which rule 1b is not applied (their manual bins stay whole whatever the
+    #: Delta spread): 240P, whose merged phase spans Delta by ~30 %
+    delta_tol_exempt: Tuple[str, ...] = ("240P",)
 
 
 @dataclass(frozen=True)
@@ -361,6 +367,9 @@ class Variant:
     continuum: ContinuumConfig = field(default_factory=ContinuumConfig)
     fit: FitConfig = field(default_factory=FitConfig)
     model: ModelParams = field(default_factory=ModelParams)
+    #: apply the per-(target, phase) case revisions of :mod:`revisions` (the 2026-09-15 memo);
+    #: ``dc_main_norev`` runs without them to measure their effect
+    revisions: bool = True
     #: What the run is for.  ``main`` is the catalog result; ``flags``, ``distcorr``,
     #: ``badphot``, ``fluorescence``, ``errors`` and ``rules`` are its study partners;
     #: ``previous`` is an earlier baseline kept for a before/after comparison.  The driver selects study partners by
@@ -423,6 +432,9 @@ DEFAULT_VARIANTS: Tuple[Variant, ...] = (
     # per-phase rule of the main run
     Variant("dc_ap_snr",      BASELINE_FLAGS, use_distcorr=True, aperture=ApertureConfig(rule="snr"),
             role="rules"),
+    # 2026-09-15: the main configuration without the case revisions of the review memo -- what
+    # the hand-set windows, orders, exclusions, waivers and rejections change
+    Variant("dc_main_norev",  BASELINE_FLAGS, use_distcorr=True, revisions=False, role="rules"),
     # 2026-09-12: every rule of the 2026-09-11 run that a variant can carry -- r_h-based aperture,
     # fixed 3/2/2 orders without the one-sided extension, the 1 sigma negative cut and detection
     # tier, diagonal errors, no hot-band distance cap.  Windows and grouping are shared.
@@ -539,6 +551,14 @@ PLACEHOLDERS: Tuple[dict, ...] = (
          value="Delta spread < 20 % inside every group (GroupingConfig.delta_tol; applied 2026-09-12)",
          role="bounds the r_h^2 Delta^2 spread the distance-corrected continuum must absorb",
          update="applied; 20 % is a convention"),
+    dict(priority=18, quantity="case revisions (review memo 2026-09-15)",
+         value="34 (target, phase) groups with hand-set windows, orders, point exclusions, waivers "
+               "of the negative / one-sided continuum rejection, reduced coverage requirements or "
+               "rejected detections (revisions.CASE_REVISIONS); 240P phases 2-3 merged "
+               "(GroupingConfig); Af-rho overrides for 47P, 210P, 217P (ztfcomet.config)",
+         role="the reviewer's judgement of individual figures, applied as data so every variant "
+              "and figure sees the same group the same way; dc_main_norev measures the effect",
+         update="applied 2026-09-15; revisit each entry when the LSF or the windows change"),
     dict(priority=15, quantity="source-flag thresholds (upstream)",
          value="flag a: G_eff < 13 within r_ap + 2 FWHM; flag b: Gaia flux > 0.2 x comet flux "
                "within r_ap + FWHM (spherex_apphot.Config)",

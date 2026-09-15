@@ -343,6 +343,8 @@ def plot_fit(fit, points: pd.DataFrame, curves: dict, fit_cfg):
             qtxt.append(f"Q({PRETTY[s]}) $<$ {fit.Q_limit[k]:.2e}")
         elif st == "marginal":
             qtxt.append(f"Q({PRETTY[s]}) = {fit.Q[k]:.2e} $\\pm$ {fit.Q_err[k]:.1e} (marginal)")
+        elif st == "rejected":
+            qtxt.append(f"Q({PRETTY[s]}) rejected (case revision)")
         else:
             qtxt.append(f"Q({PRETTY[s]}) = {fit.Q[k]:.2e} $\\pm$ {fit.Q_err[k]:.1e}")
     fig.suptitle(f"{fit.target}   phase {fit.phase}   $r_{{ap}}$ = {fit.r_ap_km:,.0f} km   "
@@ -597,6 +599,7 @@ def save_variant_figures(variant: Variant, assignment: pd.DataFrame,
     from .continuum import insufficient, process_group
     from .dataio import aperture_label, load_fit_input, phase_spectra
     from .fitting import fit_production_rates, model_curves
+    from .revisions import revision_for
     from .config import ModelParams
     apply_rcparams()
     dirs = _dir.variant_dirs(variant.name)
@@ -615,9 +618,10 @@ def save_variant_figures(variant: Variant, assignment: pd.DataFrame,
                 break
             n += 1
             stem = f"{t}_{aperture_label(r_ap)}km_ph{ph}"
+            rev = revision_for(t, ph, variant.revisions)
             if validation:
                 out = process_group(raw, t, r_ap, int(ph), int(raw.epoch.iloc[0]),
-                                    variant.continuum, space)
+                                    variant.continuum, space, rev=rev)
                 fig = plot_validation_grid(out, t, r_ap, ph, variant.continuum, space)
                 written.append(savefig(fig, dirs["fig_cont"] / f"{stem}_validation.png"))
                 fig, _ = plot_raw_spectrum(raw, t, r_ap, ph, space)
@@ -628,7 +632,7 @@ def save_variant_figures(variant: Variant, assignment: pd.DataFrame,
                     params = ModelParams(rho_ap_km=r_ap)
                     with warnings.catch_warnings():
                         warnings.simplefilter("ignore")
-                        f = fit_production_rates(pts, params, variant.fit)
+                        f = fit_production_rates(pts, params, variant.fit, rev=rev)
                         c = model_curves(f, pts, params)
                 except (ValueError, FileNotFoundError) as exc:
                     # the pipeline lists these groups in not_fitted.csv: no fit, no fit figure

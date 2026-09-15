@@ -23,11 +23,20 @@ it was obtained (``afrho_*`` columns of ``gas_fit.csv``) -- so the deck can be p
 through without the tables open.  The raster-heavy phase images are embedded as JPEG
 copies to keep the deck within reason; the files on disk stay PNG.
 
+Before/after comparison (2026-09-16).  When a *previous* figure set exists (by default
+``fig/comspec/previous_rev260915/``, the figures and ``gas_fit.csv`` of the groups the review
+memo of 2026-09-15 revised, copied before the rerun), every group that has figures there gets
+its three *previous* slides (header "BEFORE the 2026-09-15 revision") immediately before the
+three current ones ("AFTER"), so the two states can be paged through side by side.  A regrouped
+comet maps its new phases onto the old ones through ``PREVIOUS_PHASES``.  ``--no-previous``
+builds the plain deck.
+
 Usage
 -----
     python scripts/comspec/make_figure_slides.py                 # every group
     python scripts/comspec/make_figure_slides.py 2P:1            # one group (example slide)
     python scripts/comspec/make_figure_slides.py 2P 10P:2        # a target, or single groups
+    python scripts/comspec/make_figure_slides.py --no-previous   # without the before/after pairs
 """
 from __future__ import annotations
 
@@ -51,6 +60,10 @@ OUT = ROOT / "doc" / "figures.pptx"
 CACHE = Path()          # set in main(): cropped copies of the figures
 TREND_FIG = Path(os.environ.get("ZTF_TREND_SLIDES", ROOT / "fig" / "ztf" / "afrho" / "trend_slide")).expanduser()
 IMAGE_FIG = FIG / "phase_images"
+#: the figure set of the state before the 2026-09-15 case revisions (see the module docstring)
+PREVIOUS = Path(os.environ.get("COMSPEC_PREVIOUS_FIGS", FIG / "previous_rev260915")).expanduser()
+#: new phase -> the old phases it replaced, for comets regrouped by the revision
+PREVIOUS_PHASES = {("240P", 2): [2, 3], ("240P", 3): [4]}
 
 SLIDE_W, SLIDE_H = 13.333, 7.5          # 16:9 inches
 
@@ -310,33 +323,52 @@ def _stem(row: pd.Series) -> str:
     return f"{row['target']}_{aperture_label(float(row['r_ap_km']))}km_ph{int(row['phase'])}"
 
 
-def add_slide(prs, row: pd.Series):
+class FigSet:
+    """Where the three figures of a group live: the current set, or a previous snapshot."""
+
+    def __init__(self, cont: Path, emission: Path, images: Path, trend: Path, tag: str = ""):
+        self.cont, self.emission, self.images, self.trend, self.tag = cont, emission, images, trend, tag
+
+    def has(self, row: pd.Series) -> bool:
+        stem = _stem(row)
+        return (self.cont / f"{stem}_validation.png").is_file() or (self.emission / f"{stem}.png").is_file()
+
+
+CURRENT = FigSet(FIG / "cont_subtract", FIG / "emission_model", IMAGE_FIG, TREND_FIG)
+
+
+def previous_set(root: Path) -> FigSet:
+    return FigSet(root / "cont_subtract", root / "emission_model", root / "phase_images", root / "trend_slide",
+                  tag="BEFORE the 2026-09-15 revision   ·   ")
+
+
+def add_slide(prs, row: pd.Series, figs: FigSet = CURRENT):
     """1/3 -- the spectra: raw, continuum fit, emission-model fit."""
     slide = prs.slides.add_slide(prs.slide_layouts[6])       # blank
     stem = _stem(row)
-    _header(slide, row, "1 / 3   spectra  ·  continuum  ·  emission model", stem)
+    _header(slide, row, figs.tag + "1 / 3   spectra  ·  continuum  ·  emission model", stem)
     top, bot = BODY_TOP, BODY_BOT
     body_h = bot - top
     left_w = 5.35
-    place(slide, FIG / "cont_subtract" / f"{stem}_validation.png",
+    place(slide, figs.cont / f"{stem}_validation.png",
           0.35, top, left_w, body_h - 0.28,
           "②  continuum fit  ·  subtraction  ·  residuals",
           header_lines=1)
     right_x, right_w = 6.45, 6.13
-    place(slide, FIG / "cont_subtract" / f"{stem}_raw.png",
+    place(slide, figs.cont / f"{stem}_raw.png",
           right_x, top, right_w, 2.00, "①  raw spectrum")
-    place(slide, FIG / "emission_model" / f"{stem}.png",
+    place(slide, figs.emission / f"{stem}.png",
           right_x, top + 2.45, right_w, 3.05, "③  emission model fit",
           header_lines=3)
     return slide
 
 
-def add_trend_slide(prs, row: pd.Series):
+def add_trend_slide(prs, row: pd.Series, figs: FigSet = CURRENT):
     """2/3 -- the ZTF Afρ trend of the comet, this phase highlighted."""
     slide = prs.slides.add_slide(prs.slide_layouts[6])
     stem = _stem(row)
-    _header(slide, row, "2 / 3   ZTF Afρ trend  ·  this phase highlighted", stem)
-    path = TREND_FIG / f"{row['target']}_S{int(row['phase'])}.png"
+    _header(slide, row, figs.tag + "2 / 3   ZTF Afρ trend  ·  this phase highlighted", stem)
+    path = figs.trend / f"{row['target']}_S{int(row['phase'])}.png"
     place(slide, path, 0.35, BODY_TOP, SLIDE_W - 0.7, BODY_BOT - BODY_TOP - 0.28,
           "ZTF A(0°)fρ against r_h at ρ = 10,000 and 20,000 km; red: the value at each SPHEREx phase; "
           "gold ring and tinted row: this phase",
@@ -344,16 +376,29 @@ def add_trend_slide(prs, row: pd.Series):
     return slide
 
 
-def add_images_slide(prs, row: pd.Series):
+def add_images_slide(prs, row: pd.Series, figs: FigSet = CURRENT):
     """3/3 -- the stacked images at the phase."""
     slide = prs.slides.add_slide(prs.slide_layouts[6])
     stem = _stem(row)
-    _header(slide, row, "3 / 3   stacked images at the phase", stem)
-    place(slide, IMAGE_FIG / f"{stem}.png", 0.35, BODY_TOP, SLIDE_W - 0.7, BODY_BOT - BODY_TOP - 0.28,
+    _header(slide, row, figs.tag + "3 / 3   stacked images at the phase", stem)
+    place(slide, figs.images / f"{stem}.png", 0.35, BODY_TOP, SLIDE_W - 0.7, BODY_BOT - BODY_TOP - 0.28,
           "ZTF r nearest the SPHEREx window  ·  SPHEREx exposures of the phase in the continuum (1.2–2.5 µm), "
           "H₂O, CO₂ and CO windows  ·  north up, comet-centred medians",
           jpeg=True, missing="run scripts/phase_images.py")
     return slide
+
+
+def previous_rows(row: pd.Series, prev_fits: pd.DataFrame) -> list:
+    """The previous-state rows of this group: the same (target, phase), or the old phases a
+    regrouped phase replaced (``PREVIOUS_PHASES``)."""
+    t, ph = row["target"], int(row["phase"])
+    phases = PREVIOUS_PHASES.get((t, ph), [ph])
+    out = []
+    for old in phases:
+        r = prev_fits[(prev_fits.target == t) & (prev_fits.phase.astype(int) == int(old))]
+        if len(r):
+            out.append(r.iloc[0])
+    return out
 
 
 # --- driver ------------------------------------------------------------------
@@ -378,19 +423,33 @@ def sort_key(target: str):
 
 def main(args: list[str]) -> None:
     global CACHE
+    use_previous = "--no-previous" not in args
+    args = [a for a in args if not a.startswith("--")]
     fits = pd.read_csv(RESULTS / "gas_fit.csv", dtype={"target": str})
     sel = select(fits, args).copy()
     sel["_k"] = sel.target.map(sort_key)
     sel = sel.sort_values(["_k", "phase"])
     if sel.empty:
         raise SystemExit(f"no groups matched {args}")
+    prev, prev_fits = None, None
+    if use_previous and (PREVIOUS / "gas_fit.csv").is_file():
+        prev = previous_set(PREVIOUS)
+        prev_fits = pd.read_csv(PREVIOUS / "gas_fit.csv", dtype={"target": str})
 
     tmp = TemporaryDirectory(prefix="figslides_")
     CACHE = Path(tmp.name)
 
     prs = Presentation()
     prs.slide_width, prs.slide_height = Inches(SLIDE_W), Inches(SLIDE_H)
+    n_pairs = 0
     for _, row in sel.iterrows():
+        if prev is not None:
+            for old in previous_rows(row, prev_fits):
+                if prev.has(old):
+                    add_slide(prs, old, prev)
+                    add_trend_slide(prs, old, prev)
+                    add_images_slide(prs, old, prev)
+                    n_pairs += 1
         add_slide(prs, row)
         add_trend_slide(prs, row)
         add_images_slide(prs, row)
@@ -399,7 +458,9 @@ def main(args: list[str]) -> None:
     prs.save(OUT)
     tmp.cleanup()
     mb = OUT.stat().st_size / 1024 ** 2
-    print(f"{OUT.relative_to(ROOT)}: {len(sel)} group(s), {len(prs.slides)} slides, {mb:.1f} MB")
+    print(f"{OUT.relative_to(ROOT)}: {len(sel)} group(s), {len(prs.slides)} slides"
+          + (f" ({n_pairs} previous-state group(s) placed before their revised slides)" if n_pairs else "")
+          + f", {mb:.1f} MB")
 
 
 if __name__ == "__main__":

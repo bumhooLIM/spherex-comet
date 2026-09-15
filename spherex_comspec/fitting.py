@@ -47,13 +47,14 @@ from .instrument import bandpass_matrix
 
 __all__ = ["build_design_matrix", "fit_production_rates", "FitResult", "model_curves",
            "key_range_counts", "channel_masks", "data_covariance", "STATUS_DETECTED", "STATUS_MARGINAL",
-           "STATUS_UPPER_LIMIT", "STATUS_NEGATIVE", "STATUS_NOT_COVERED"]
+           "STATUS_UPPER_LIMIT", "STATUS_NEGATIVE", "STATUS_NOT_COVERED", "STATUS_REJECTED"]
 
 STATUS_DETECTED = "detected"        # >= FitConfig.detection_sigma
 STATUS_MARGINAL = "marginal"        # between marginal_sigma and detection_sigma: value reported, limit quoted
 STATUS_UPPER_LIMIT = "upper_limit"
 STATUS_NEGATIVE = "negative_fit"
 STATUS_NOT_COVERED = "not_covered"
+STATUS_REJECTED = "rejected"        # a covered, fitted species whose detection the review rejected (case revision)
 
 _COLS = {"physical": ("emis_raw_mjy", "emis_raw_err_mjy"),
          "distcorr": ("emis_mjy", "emis_err_mjy")}
@@ -200,6 +201,8 @@ class FitResult:
     #: "main" (2.7 um band), "hot" (4.6-4.9 um hot bands only) or "none"
     h2o_source: str = "none"
     n_hot_H2O: int = 0
+    #: the case revision applied to the group (``revisions.CaseRevision.describe()``), or ""
+    revision: str = ""
 
     @property
     def chi2_red(self) -> float:
@@ -212,6 +215,8 @@ class FitResult:
 
     def caveats(self) -> list:
         out = []
+        if self.revision:
+            out.append("case revision (review memo 2026-09-15): " + self.revision)
         if self.h2o_source == "hot":
             out.append(f"Q(H2O) from the 4.6-4.9 um hot bands only ({self.n_hot_H2O} channels; 2.7 um "
                        "not covered): provisional -- the hot bands carry ~3 % of the water emission "
@@ -234,6 +239,10 @@ class FitResult:
                                f"{r['lo']:.2f}-{r['hi']:.2f} um, needs {r['min_points']}")
                 else:
                     out.append(f"Q({s}) unconstrained: bands not covered by the data")
+            elif self.status[k] == STATUS_REJECTED:
+                out.append(f"Q({s}) rejected as a spurious detection by the review (case revision); "
+                           f"the fitted value {self.Q_fit[k]:+.2e} +/- {self.Q_err[k]:.1e} is not a "
+                           "production rate")
             elif self.status[k] == STATUS_NEGATIVE:
                 out.append(f"Q({s}) best fit is negative ({self.Q_fit[k]:+.2e}): no production "
                            f"rate derived, upper limit only")
@@ -299,11 +308,13 @@ class FitResult:
                 row[f"{num}_H2O"] = r
                 row[f"{num}_H2O_err"] = e
         row["caveats"] = "; ".join(self.caveats())
+        row["revision"] = self.revision
         return row
 
 
 def fit_production_rates(points: pd.DataFrame, params: ModelParams,
-                         cfg: FitConfig | None = None, space: str = "physical") -> FitResult:
+                         cfg: FitConfig | None = None, space: str = "physical",
+                         rev=None) -> FitResult:
     """
     Weighted linear least squares for Q(H2O), Q(CO2), Q(CO).
 
@@ -318,6 +329,10 @@ def fit_production_rates(points: pd.DataFrame, params: ModelParams,
     space : {"physical", "distcorr"}
         Flux space of the solve (see the module docstring).  The retrieved Q is
         the same in both; the default is physical.
+    rev : revisions.CaseRevision, optional
+        The group's case revision: a species can be declared covered on a minimum number
+        of its band's emission channels instead of the ``KEY_RANGES`` rule, and a
+        detection can be rejected (status ``rejected``, no value reported).
 
     Notes
     -----
@@ -357,6 +372,14 @@ def fit_production_rates(points: pd.DataFrame, params: ModelParams,
     else:
         col_max = np.abs(A).max(axis=0) if len(A) else np.zeros(len(species))
         covered = col_max > (col_max.max() * 1e-6 if col_max.max() > 0 else np.inf)
+    # case revision: coverage on the band's emission channels instead of the key range (the
+    # review judged the channels present to carry the band)
+    if rev is not None:
+        from .revisions import BAND_OF
+        for s, n_min in rev.coverage().items():
+            if s in species and s in BAND_OF:
+                n_band = int((pts["band"].astype(str) == BAND_OF[s]).sum())
+                covered[species.index(s)] = n_band >= n_min
     # H2O: the 2.7 um main band anchors the fit; only when it is not covered do the 4.6-4.9 um
     # hot bands carry Q(H2O), and the result is labelled so downstream (bright, close comets
     # such as 10P and 24P lose the 2.7 um channels to saturation and flags).
@@ -448,6 +471,14 @@ def fit_production_rates(points: pd.DataFrame, params: ModelParams,
             status[i] = STATUS_UPPER_LIMIT
             Q[i] = Q_fit[i]
             Q_limit[i] = Q_fit[i] + k * Q_err[i]
+    if rev is not None:
+        for s in rev.reject:
+            if s in species:
+                i = species.index(s)
+                if status[i] != STATUS_NOT_COVERED:
+                    status[i] = STATUS_REJECTED
+                    Q[i] = np.nan
+                    Q_limit[i] = np.nan
     is_ul = np.isin(status, (STATUS_UPPER_LIMIT, STATUS_NEGATIVE))
 
     geom = dict(
@@ -473,7 +504,8 @@ def fit_production_rates(points: pd.DataFrame, params: ModelParams,
         covered=covered, n_key=n_key, n_eff=n_eff, status=status, upper_limit=is_ul,
         h2o_source=h2o_source, n_hot_H2O=n_hot,
         Q_limit=Q_limit, err_scale=scale, n_dropped_negative=n_dropped_neg, space=space,
-        geometry=geom, params=params, config=cfg)
+        geometry=geom, params=params, config=cfg,
+        revision=rev.describe() if rev is not None else "")
 
 
 def model_curves(fit: FitResult, points: pd.DataFrame, params: ModelParams,

@@ -375,6 +375,18 @@ Per SPHEREx phase group, the ZTF r-band A(0°)fρ at the group's mean r_h (`sphe
 | 10k | 165 | 79 | 25 | 12 | 49 | 116 |
 | 20k | 165 | 79 | 33 | 8 | 45 | 120 |
 
+**Per-epoch overrides (2026-09-15 memo, `ztfcomet.config.AFRHO_EPOCH_OVERRIDES`; applied by
+`afrho_trends.py` through keyword arguments of `afrho_at_epoch`, and named in the `note`).**
+47P S1: the rising law is grade D (a 0.09 au baseline) and S1 lies 0.005 dex beyond it — the
+extrapolation is allowed for this epoch (`extrap_grades` includes D).  210P S1–S4: ZTF observed
+the comet after perihelion only; the four inbound SPHEREx phases are read off the outbound law
+(`leg="outbound"`; S1 at 2.47 au is a 0.05 dex extrapolation of its 0.61–2.19 au range), a
+symmetric-activity assumption the note states.  217P S1: two of the five in-window frames sat
+at the start of the 2.30 au outburst and lifted the direct mean to 124 cm; they are excluded
+(`exclude_outburst=True`) and the quiescent frames give the value.  The tables below and the
+per-phase figures were regenerated for these three comets and for 240P (regrouped) after the
+override; `doc/comspec/case_revisions.md` lists the before → after values.
+
 Why there is no estimate:
 
 | reason | 10,000 km | 20,000 km |

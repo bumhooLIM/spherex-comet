@@ -38,7 +38,7 @@ fig/*
 
 # The review deck is rebuilt by scripts/comspec/make_figure_slides.py; the papers
 # in doc/literature/ are copyrighted -- their .summary.md files are tracked instead
-doc/figures.pptx
+doc/figures*.pptx
 doc/literature/**/*.pdf
 
 # Editor

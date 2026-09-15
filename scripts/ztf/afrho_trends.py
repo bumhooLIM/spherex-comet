@@ -139,8 +139,12 @@ def spherex_epochs(target, phot, trends, outbursts, windows, tp_jd):
             fitted = bool(np.isfinite(w.get("rh_fit", np.nan)))
             rh0 = float(w["rh_fit"]) if fitted else float(w["rh_mean"])
             jd0 = float(w["jd_fit"]) if fitted else float(w["jd_mean"])
+            ov = zc.config.afrho_epoch_override(target, int(w["phase"]))
+            memo = ov.pop("memo", "")
             r = ac.afrho_at_epoch(pts, tr, rh0, jd0, float(w["jd_min"]), float(w["jd_max"]), tp_jd=tp_jd,
-                                  outbursts=ob)
+                                  outbursts=ob, **ov)
+            if memo:
+                r["note"] = (r["note"] + " " if r["note"] else "") + f"[{memo}]"
             rows.append(dict(target=target, phase=int(w["phase"]), rho_km=rho, band="r", fitted=fitted, rh=rh0,
                              rh_source="gas_fit" if fitted else "exposures", jd=jd0,
                              t_tp=(jd0 - tp_jd) if tp_jd is not None and np.isfinite(tp_jd) else np.nan,

@@ -283,3 +283,43 @@ def test_evaluate_trend_error_is_smallest_at_the_data():
     _, e_edge = ac.evaluate_trend(f, lr.max(), include_scatter=False)
     _, e_sc = ac.evaluate_trend(f, f["log_rh_mean"])
     assert e_mid < e_edge and e_sc > e_mid
+
+
+def test_epoch_leg_override_reads_the_other_side_of_perihelion():
+    pts, tr, tp = _epoch_setup()                      # an inbound-only comet
+    after = tp + 60.0                                  # an outbound epoch inside the fitted r_h range
+    none = ac.afrho_at_epoch(pts, tr, 2.0, after, tp_jd=tp)
+    assert none["method"] == "none" and "fits only the inbound" in none["note"]
+    forced = ac.afrho_at_epoch(pts, tr, 2.0, after, tp_jd=tp, leg="inbound")
+    assert forced["method"] == "trend" and forced["leg"] == "inbound"
+    assert abs(forced["log_afrho"] - (3.0 - 2.5 * np.log10(2.0))) < 3 * forced["log_afrho_err"]
+    assert "for the outbound epoch" in forced["note"]
+
+
+def test_epoch_grade_d_law_extrapolates_only_when_allowed():
+    pts, tr, tp = _epoch_setup()
+    tr = tr.assign(grade="D")
+    far = pts["obsjd"].min() - 400.0
+    rh_max = float(tr["rh_max"].iloc[0])
+    r0 = ac.afrho_at_epoch(pts, tr, rh_max * 10 ** 0.02, far, tp_jd=tp)
+    assert r0["method"] == "none" and "unconstrained (grade D)" in r0["note"]
+    r1 = ac.afrho_at_epoch(pts, tr, rh_max * 10 ** 0.02, far, tp_jd=tp, extrap_grades=("A", "B", "C", "D"))
+    assert r1["method"] == "trend_extrap" and r1["grade"] == "D"
+
+
+def test_epoch_direct_mean_can_exclude_outburst_frames():
+    pts, tr, tp = _epoch_setup()
+    jd0 = float(pts["obsjd"].iloc[20])
+    rh0 = float(pts["r"].iloc[20])
+    up = pts.copy()
+    win = (up["obsjd"] >= jd0 - 8) & (up["obsjd"] <= jd0 + 8)
+    assert win.sum() >= 3
+    burst = up.index[win][:1]                          # one in-window frame is an outburst
+    up.loc[burst, "log_afrho"] += 1.0
+    ob = pd.DataFrame([dict(jd_start=float(up.loc[burst, "obsjd"].iloc[0]) - 0.1,
+                            jd_end=float(up.loc[burst, "obsjd"].iloc[0]) + 0.1)])
+    with_ = ac.afrho_at_epoch(up, tr, rh0, jd0, jd0 - 3, jd0 + 3, tp_jd=tp, outbursts=ob)
+    without = ac.afrho_at_epoch(up, tr, rh0, jd0, jd0 - 3, jd0 + 3, tp_jd=tp, outbursts=ob, exclude_outburst=True)
+    assert with_["n_outburst_window"] == 1 and without["n"] == with_["n"] - 1
+    assert without["log_afrho"] < with_["log_afrho"] and "excluded" in without["note"]
+    assert abs(without["log_afrho"] - (3.0 - 2.5 * np.log10(rh0))) < 0.05

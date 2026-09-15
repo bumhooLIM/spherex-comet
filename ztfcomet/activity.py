@@ -854,7 +854,7 @@ def _with_linear(out):
 
 def afrho_at_epoch(pts, trends, rh0, jd0, jd_lo=None, jd_hi=None, tp_jd=None, arc=None,
                    outbursts=None, pad_days=5.0, min_direct=2, max_extrap_dex=0.10,
-                   extrap_grades=("A", "B", "C"), tol=0.005):
+                   extrap_grades=("A", "B", "C"), tol=0.005, leg=None, exclude_outburst=False):
     """Af-rho of one comet at one observing epoch, from its ZTF series.
 
     The epoch is a window ``[jd_lo, jd_hi]`` around *jd0* (a SPHEREx phase
@@ -886,6 +886,13 @@ def afrho_at_epoch(pts, trends, rh0, jd0, jd_lo=None, jd_hi=None, tp_jd=None, ar
     the window is used only when no trend can be evaluated, with an error
     floor of 0.1 dex.
 
+    Two per-case overrides (``config.AFRHO_EPOCH_OVERRIDES``): *leg* names
+    the fitted leg to use regardless of where the epoch falls (an epoch on
+    the orbital side ZTF never covered, read off the other side's law), and
+    *exclude_outburst* drops the in-window frames that lie inside an
+    outburst window from the direct mean (they measure the outburst, not
+    the epoch).
+
     Parameters
     ----------
     pts : pandas.DataFrame
@@ -915,13 +922,18 @@ def afrho_at_epoch(pts, trends, rh0, jd0, jd_lo=None, jd_hi=None, tp_jd=None, ar
     jd_hi = jd0 if jd_hi is None else jd_hi
     win = pts[(pts["obsjd"] >= jd_lo - pad_days) & (pts["obsjd"] <= jd_hi + pad_days)]
     out["n_window"] = int(len(win))
+    excluded_note = ""
     if outbursts is not None and len(outbursts) and len(win):
         m = np.zeros(len(win), bool)
         for _, w in outbursts.iterrows():
             m |= ((win["obsjd"] >= w["jd_start"]) & (win["obsjd"] <= w["jd_end"])).to_numpy()
         out["n_outburst_window"] = int(m.sum())
+        if exclude_outburst and m.any():
+            win = win[~m]
+            excluded_note = f"; {int(m.sum())} in-window frame(s) inside an outburst excluded"
     have_trends = trends is not None and len(trends) > 0
-    leg, prim = _leg_at_epoch(trends, jd0, tp_jd, arc) if have_trends else ("", pd.DataFrame())
+    leg_auto, prim = _leg_at_epoch(trends, jd0, tp_jd, arc) if have_trends else ("", pd.DataFrame())
+    leg = str(leg) if leg else leg_auto
     out["leg"] = leg
     rows = _epoch_rows(trends, leg) if have_trends else pd.DataFrame()
     primary = rows[rows["split"].isin(_PRIMARY_SPLITS)] if len(rows) else rows
@@ -948,8 +960,9 @@ def afrho_at_epoch(pts, trends, rh0, jd0, jd_lo=None, jd_hi=None, tp_jd=None, ar
         note = f"{len(y)} ZTF frames within {pad_days:g} d of the window"
         if src is not None:
             note += f", moved to <r_h> along x = {slope:.2f} ({src['leg']}, grade {src['grade']})"
-        if out["n_outburst_window"]:
+        if out["n_outburst_window"] and not excluded_note:
             note += f"; {out['n_outburst_window']} of them in an outburst"
+        note += excluded_note
         out.update(method="direct", log_afrho=ym, log_afrho_err=err, n=int(len(y)),
                    rms_dex=float(np.std(y - ym)) if len(y) > 1 else np.nan,
                    grade=str(src["grade"]) if src is not None else "", note=note)
@@ -970,12 +983,13 @@ def afrho_at_epoch(pts, trends, rh0, jd0, jd_lo=None, jd_hi=None, tp_jd=None, ar
         if not have_trends or prim.empty:
             return _single_or("no fitted ZTF trend at this aperture")
         fitted = "/".join(sorted(set(prim["leg"])))
-        return _single_or(f"ZTF fits only the {fitted} phase; the SPHEREx epoch is {leg}")
+        return _single_or(f"ZTF fits only the {fitted} phase; the SPHEREx epoch is {leg_auto or leg}")
     if local is not None:
         y, e = evaluate_trend(local, log_rh0)
+        other = f" for the {leg_auto} epoch" if leg_auto and leg_auto != leg else ""
         out.update(method="trend", log_afrho=y, log_afrho_err=e, n=int(local["n"]), grade=str(local["grade"]),
                    rms_dex=float(local["rms_dex"]),
-                   note=f"{local['leg']} law (n = {int(local['n'])}, grade {local['grade']}) at <r_h>")
+                   note=f"{local['leg']} law (n = {int(local['n'])}, grade {local['grade']}) at <r_h>{other}")
         return _with_linear(out)
     # 3. a bounded extrapolation of the primary law
     lo, hi = np.log10(float(primary["rh_min"])), np.log10(float(primary["rh_max"]))

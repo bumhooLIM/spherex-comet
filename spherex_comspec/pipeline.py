@@ -30,6 +30,7 @@ from .dataio import (PhaseAssignment, aperture_table, attach_afrho_ztf, list_cat
                      load_fit_input, save_emission, save_fit_lines, save_fit_table,
                      select_spectrum)
 from .fitting import fit_production_rates, model_curves
+from .revisions import revision_for
 from .grouping import regroup_all
 from .logging_utils import get_logger, utcnow_iso
 
@@ -163,10 +164,11 @@ def run_variant(variant: Variant, targets: Optional[Sequence[str]] = None,
                     skipped.append(dict(target=t, r_ap_km=r_ap_km, phase=int(ph), n_points=len(raw),
                                         n_emission=n_in_emission(raw), reason=why))
                     continue
+                rev = revision_for(t, ph, variant.revisions)
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore")
                     out = process_group(raw, t, r_ap_km, int(ph), int(raw.epoch.iloc[0]),
-                                        variant.continuum, space)
+                                        variant.continuum, space, rev=rev)
                 summ = out["summary"]
                 summ["n_rejected_badphot"] = rej["n_badphot"]
                 summ["n_rejected_flag"] = rej["n_flag"]
@@ -198,9 +200,10 @@ def run_variant(variant: Variant, targets: Optional[Sequence[str]] = None,
                                        if "no usable band" in str(exc) else str(exc)[:100]))
                 continue
             try:
+                rev = revision_for(r.target, r.phase, variant.revisions)
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore")
-                    fit = fit_production_rates(pts, params, variant.fit, space="physical")
+                    fit = fit_production_rates(pts, params, variant.fit, space="physical", rev=rev)
                     curves = model_curves(fit, pts, params)
                 if write:
                     save_fit_lines(variant.name, fit, pts, curves)

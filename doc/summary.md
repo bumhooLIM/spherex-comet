@@ -2,8 +2,9 @@
 
 _Project `spherex-comet` · written 2026-09-15 at the merge of the three former projects
 (`ztf-comet`, `spherex-comet-apphot`, `spherex-comet-catalog`) · state of the results:
-ZTF chain 2026-09-11/14, SPHEREx photometry 2026-09-12 (config `9fcc7ea3871a`), gas fits
-2026-09-14 (run `a6463b4c610b`, `spherex_comspec` 1.2.0)._
+ZTF chain 2026-09-11/14 (Afρ epochs of 47P, 210P, 217P, 240P re-estimated 2026-09-16), SPHEREx
+photometry 2026-09-12 (config `9fcc7ea3871a`), gas fits 2026-09-16 (run `5741d6611f60`,
+`spherex_comspec` 1.3.0, with the case revisions of the 2026-09-15 review memo)._
 
 This document is the one-stop description of the project: what question it answers, the
 physics and the definitions it relies on, how the three-stage pipeline works, what the
@@ -80,7 +81,7 @@ Q(CO₂) low by 13 %).
 | term | meaning in this project |
 |---|---|
 | **epoch** | a block of SPHEREx exposures separated by ≥ 28 days from the next (the survey returns to a field roughly every six months) |
-| **phase** | a subdivision of the epochs into a single observing state: r_h spread < 10 %, Δ spread < 20 %, no perihelion passage inside, emission bands never cut, cuts placed in gaps (`data/comspec/phase_assignment.csv`, `results/comspec/phase_map.csv`) — 193 phases over the 68 comets |
+| **phase** | a subdivision of the epochs into a single observing state: r_h spread < 10 %, Δ spread < 20 %, no perihelion passage inside, emission bands never cut, cuts placed in gaps (`data/comspec/phase_assignment.csv`, `results/comspec/phase_map.csv`) — 192 phases over the 68 comets (240P's phases 2–3 merged by the 2026-09-15 review) |
 | **aperture** | circular, defined in km at the comet (10 000–100 000 km set, plus 2 and 5 px); the gas fit uses one fixed aperture per phase: 20 000 km inside 3 au, 40 000 km beyond, 60 000 km when that is under 1.5 px |
 | **sky annulus** | SPHEREx: inner radius 150 000 km at the comet, floored at 15 px and capped at 40 px, 5 px wide; ZTF: 3ρ–(4ρ + 20 px), sigma-clipped median |
 | **`badphot`** | a bad (flagged or non-finite) pixel inside the aperture; the flux is summed over the good pixels and the effective area recorded — not a flux-sign cut |
@@ -88,7 +89,7 @@ Q(CO₂) low by 13 %).
 | **`quality_ok`** (ZTF) | none of the critical flags (`outside`, `aperture_edge`, `sky_edge`, `undersampled`, `centroid`, `negative_flux`, `lowsnr`, `contaminated`, `anomalous_bright`); advisory flags (`color_default`, `nan_pixels`) qualify without invalidating |
 | **distance-corrected flux** | F × r_h² Δ², the flux the comet would show at 1 au from both Sun and observer; the continuum is fitted in this space and the emission divided back by each channel's own factor before the fit |
 | **continuum verdict** | PASS / WARN / FAIL of the per-band polynomial continuum (bracketing and positivity hard, shape and cross-validation soft); "clean" detections sit on a PASS continuum |
-| **tiers** | `detected` ≥ 3σ, `marginal` 1–3σ (value reported, 3σ limit quoted), `upper_limit` < 1σ, `negative_fit`, `not_covered`; **robust** = detected with n_eff ≥ 2 |
+| **tiers** | `detected` ≥ 3σ, `marginal` 1–3σ (value reported, 3σ limit quoted), `upper_limit` < 1σ, `negative_fit`, `not_covered`, `rejected` (a detection withdrawn by the review; the fitted value stays in `Q_X_fit`); **robust** = detected with n_eff ≥ 2 |
 | **n_eff** | participation ratio of the per-channel Fisher information — how many channels really carry a species |
 | **GLS** | generalised least squares: the continuum polynomial's coefficient covariance is propagated into a full data covariance, correlated across the channels of a band |
 | **hot-band fallback** | when the 2.7 µm band is not covered and ≥ 3 channels lie in 4.55–4.90 µm with one beyond 4.75 µm, the H₂O hot bands carry Q(H₂O) (`h2o_source = hot`); offered only inside 3 au |
@@ -199,7 +200,11 @@ and `phase_map.csv` (the pipeline re-attaches them on every rerun and blanks mov
 as `stale`); `phase_images.py` builds comet-centred, north-up median stacks of the ZTF frames
 nearest each window and of the SPHEREx exposures in the continuum and the three emission
 windows (`fig/comspec/phase_images/`, `results/comspec/phase_stacks/`); `make_figure_slides.py`
-assembles the review deck.
+assembles the review deck.  **Case revisions** (`spherex_comspec.revisions`, 2026-09-15 memo,
+`doc/comspec/case_revisions.md`): per-(comet, phase) directives from the figure review —
+window edges, fixed orders, excluded points, waived checks, reduced coverage, rejected
+detections — stored as data and applied wherever a group is processed; `dc_main_norev` is
+the rule-only run; the deck keeps the previous slides of every revised group before the new ones.
 
 ## 6. Main results
 
@@ -233,11 +238,13 @@ interior activity maximum and are split there; the bracketed peaks fall within a
 of perihelion on either side (24P +11 to +13 d, 2023 R1 +17 to +19 d, 2025 K1 +36 to +38 d,
 47P −17 to −34 d, 235P −7 to −26 d, 240P −20 d), and 2024 G4 peaked 60–85 d before.
 
-*Afρ at the SPHEREx epochs.*  Over the 165 SPHEREx phases of the 56 comets, an A(0°)fρ
-value exists for 116 at 10 000 km and 120 at 20 000 km (79 direct in each, the rest from a
-law); the missing ones fall outside a grade-D law (19–20), on the orbital leg ZTF never
-covered (15–17), or beyond 0.1 dex of the data.  Attached to the catalog, 89 / 95 of the 147
-fitted phases carry a dust value.
+*Afρ at the SPHEREx epochs.*  Over the 164 SPHEREx phases of the 56 comets, an A(0°)fρ
+value exists for 120 at 10 000 km and 124 at 20 000 km (79 direct in each, the rest from a
+law); the missing ones fall outside a grade-D law, on the orbital leg ZTF never covered, or
+beyond 0.1 dex of the data.  Three epochs follow the 2026-09-15 review (`AFRHO_EPOCH_OVERRIDES`):
+47P S1 from its grade-D rising law, 210P S1–S4 from the outbound law (ZTF saw the comet only
+after perihelion), 217P S1 without the two frames at its outburst start (124 → 54 cm).
+Attached to the catalog, 91 / 97 of the 147 fitted phases carry a dust value.
 
 ### 6.2 SPHEREx photometry
 
@@ -252,15 +259,19 @@ clean-channel flux) and left comets beyond ~1.6 au unchanged.  The known systema
 remains is the absence of an aperture (encircled-energy) correction: the smallest retained
 apertures are ~1 px against a ~1 px PSF that broadens with wavelength.
 
-### 6.3 Gas production rates (`results/comspec/gas_fit.csv`, run `a6463b4c610b`)
+### 6.3 Gas production rates (`results/comspec/gas_fit.csv`, run `5741d6611f60`)
 
-161 of the 193 phases were analysable (32 skipped for insufficient channels), 147 were fitted
-(14 not fittable), over 67 comets.  **Robust ≥ 3σ detections (n_eff ≥ 2): H₂O in 17 phases
-(14 comets, all from the 2.7 µm band), CO₂ in 26 (25 comets), CO in 4 (3 comets)** — 35
-comets with at least one robust detection, 34 of them clean (on a PASS continuum); a further
-19 comets have only marginal (1–3σ) values (H₂O 25, CO₂ 23, CO 9 phases).  The apertures in
+161 of the 192 phases were analysable (31 skipped for insufficient channels), 147 were fitted
+(14 not fittable), over 67 comets.  **Robust ≥ 3σ detections (n_eff ≥ 2): H₂O in 18 phases
+(all from the 2.7 µm band), CO₂ in 28, CO in 4** — 37 comets with at least one robust
+detection, 36 of them clean (on a PASS continuum); a further 19 comets have only marginal
+(1–3σ) values (H₂O 24, CO₂ 26, CO 9 phases); two H₂O detections were withdrawn as spurious by
+the 2026-09-15 review (`rejected`).  Against the rule-only run (`dc_main_norev`, identical to
+the 2026-09-14 result) the review's case revisions add one robust H₂O and two robust CO₂
+values, six single-channel CO₂ detections outside the robust census, and lower the median
+χ²_ν from 4.6 to 4.2 (`doc/comspec/case_revisions.md`).  The apertures in
 use are 20 000 km for 70 fitted phases, 40 000 for 61 and 60 000 for 16.  The median χ²_ν is
-4.6 (10.4 at 20 000 km, 4.0 at 40 000, 2.3 at 60 000): the bright, close comets at small
+4.2 (was 4.6 before the review; 10.4 at 20 000 km, 4.0 at 40 000, 2.3 at 60 000 in the rule-only run): the bright, close comets at small
 apertures in pixels are limited by the line-spread function and the band shape, not by
 noise, and since the errors are rescaled by √χ²_ν every tier count is conservative.
 Q(H₂O) from the hot bands is provisional (23 rows, 1 detected, 6 marginal, all inside 3 au).
@@ -327,6 +338,11 @@ only CO responds to the heliocentric velocity (+25–31 % beyond 10 km s⁻¹). 
 10. **Provenance of the figures**: the per-comet SPHEREx summary figures in `fig/apphot/`
     date from the 2026-09-07 photometry (the per-exposure cutout PNGs, 7.6 GB, were deleted
     on 2026-09-15); regenerate with `make_figures.py --no-cutouts` for the current run.
+11. **The case revisions are judgements**: 34 groups carry hand-set windows, orders,
+    exclusions or waivers from the 2026-09-15 figure review, six CO₂ detections exist only
+    because a check was waived or the coverage rule relaxed, and 240P's merged phase spans
+    Δ by 26 %.  Every one is recorded (`revision`, `caveats`, the figures), reversible
+    (`dc_main_norev`), and must be re-read when the windows, the LSF or the photometry change.
 
 ## 8. To be added, upgraded or modified
 
@@ -362,8 +378,8 @@ versus the project's 20 pt `notebooks/rcparams.py`); merge the outstanding ZTF b
 
 | product | run | date | hash / version |
 |---|---|---|---|
-| ZTF photometry, profiles, Afρ trends | `scripts/ztf/survey.py`, `profile_survey.py`, `afrho_trends.py` | 2026-09-11 (chain), 2026-09-14 (SPHEREx epochs) | `ztfcomet` 0.3.0, branch `feat/afrho-peak-fits-and-reorg` |
+| ZTF photometry, profiles, Afρ trends | `scripts/ztf/survey.py`, `profile_survey.py`, `afrho_trends.py` | 2026-09-11 (chain), 2026-09-14 (SPHEREx epochs), 2026-09-16 (47P, 210P, 217P, 240P epochs re-estimated) | `ztfcomet` 0.3.0, branch `feat/afrho-peak-fits-and-reorg` |
 | SPHEREx photometry | `scripts/apphot/main.py --target-list … --workers 4 --force` | 2026-09-12 | `spherex_apphot` 2.2.0, config `9fcc7ea3871a` |
-| gas production rates | `scripts/comspec/main.py all` | 2026-09-14 | `spherex_comspec` 1.2.0, run `a6463b4c610b` |
+| gas production rates | `scripts/comspec/main.py all` | 2026-09-16 | `spherex_comspec` 1.3.0, run `5741d6611f60`; case revisions of the 2026-09-15 memo applied (`dc_main_norev` = rule-only) |
 | fluorescence database | `notebooks/comspec/fluorescence_gfm/build_fluorescence_db.py` | 2026-09-11 | `gfm-2026-09-11` |
-| review deck | `scripts/comspec/make_figure_slides.py` | 2026-09-14 | `doc/figures.pptx` |
+| review deck | `scripts/comspec/make_figure_slides.py` | 2026-09-16 | `doc/figures.pptx` (previous slides of every revised group before the new ones; the 2026-09-14 deck kept as `doc/figures_before_rev260915.pptx`) |

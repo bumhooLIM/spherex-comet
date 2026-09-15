@@ -13,6 +13,7 @@ is `figures.pptx` (three slides per fitted phase; `scripts/comspec/make_figure_s
 | `fitting_methodology.md` | the formalism of the fitter layer by layer (geometry → column density → excitation → spectrum → instrument → linear inverse problem) and its verification; the code is `spherex_comspec/{gasmodel,instrument,fitting}.py` |
 | `fluorescence_database.md` | solar-pumped fluorescence (pumps, cascade, Swings effect) and the reconstruction of the GSFC g-factor database for 14 species over 0.7–5.0 µm, with its validation; products `data/fluorescence/`, code `notebooks/comspec/fluorescence_gfm/` |
 | `apphot_comparison.md` | what changed between the previous and the revised aperture photometry inside the emission windows, and what it did to the band fluxes and Q |
+| `comspec/case_revisions.md` | the review memo of 2026-09-15 (`notes_ver260915.xlsx`) applied case by case: what each directive became in `spherex_comspec.revisions` / `GroupingConfig` / `ztfcomet.config`, and what it changed, before → after |
 
 ## `apphot/` — the SPHEREx photometry stage
 

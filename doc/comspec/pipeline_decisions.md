@@ -1,7 +1,7 @@
 # Pipeline decisions — SPHEREx comet gas production rates
 
-**Date:** 2026-09-14 (first written 2026-09-09) · **Package:** `spherex_comspec/`
-(`spherex_comspec` 1.2.0, run hash `a6463b4c610b`) · **Input:** `results/apphot/photometry/` (revised
+**Date:** 2026-09-16 (first written 2026-09-09) · **Package:** `spherex_comspec/`
+(`spherex_comspec` 1.3.0, run hash `5741d6611f60`; the rule-only run of 2026-09-14 was `a6463b4c610b`) · **Input:** `results/apphot/photometry/` (revised
 `spherex_apphot` photometry, config `9fcc7ea3871a`; 68 comets, 27 797 exposures) ·
 **Result:** `results/comspec/gas_fit.csv`.
 
@@ -35,12 +35,14 @@ covered.  Six configurations were run end to end and compared group by group
 | aperture (2026-09-14) | one fixed aperture per phase: 20 000 km inside 3 au, 40 000 km beyond, 60 000 km when the rule radius is under 1.5 px | 99 / 73 / 21 phases; Q within 1 % of the S/N-driven apertures of 2026-09-12, census within a few groups (§3, §7.9) |
 | continuum (2026-09-14) | 2.55–2.80 µm emission over a 2.30–3.00 µm continuum, CO₂ continuum 3.90–4.65 µm, one-sided windows extended to 1 µm, order by CV (10 %) | the method matrix's best clean census; 71 % of the band-rows saved, 78 % of the continua linear (§5, §7.9) |
 | fit (2026-09-12/14) | GLS with the continuum covariance, ≥ 3σ tier + marginal tier, no negative cut, hot-band cap at 3 au | the negative tail of the fits (≤ −2σ: 5 of 113 H₂O, 5 of 92 CO) matches the Gaussian expectation only with GLS; diagonal errors are 3–6× too optimistic (§6, §7.9) |
+| case revisions (2026-09-15/16) | 34 groups with hand-set windows, orders, point exclusions, waivers, coverage or rejections; 240P phases 2–3 merged; Afρ overrides for 47P, 210P, 217P (`revisions.py`) | robust H₂O 17 → 18, CO₂ 26 → 28, two spurious H₂O detections withdrawn, χ²_ν 4.6 → 4.2; `dc_main_norev` reproduces the rule-only result (§7.10, `case_revisions.md`) |
 
 It analyses every one of the 68 comets, fits 147 (comet, phase) groups, and yields a
-**robust ≥ 3σ detection** (n_eff ≥ 2) of at least one species for 35 comets — 34 with a
-*clean* one, i.e. on a PASS continuum: H₂O 17 groups (all clean, all from the main band;
-the hot-band fallback stops at 3 au), CO₂ 26 (25 clean), CO 4 (2 clean); a further 19
-comets have only marginal (1–3σ) values (H₂O 25, CO₂ 23, CO 9 groups).
+**robust ≥ 3σ detection** (n_eff ≥ 2) of at least one species for 37 comets — 36 with a
+*clean* one, i.e. on a PASS continuum: H₂O 18 groups (all clean, all from the main band;
+the hot-band fallback stops at 3 au), CO₂ 28 (27 clean), CO 4 (2 clean); a further 19
+comets have only marginal (1–3σ) values (H₂O 24, CO₂ 26, CO 9 groups); two H₂O detections
+were withdrawn as spurious by the 2026-09-15 review (`rejected`).
 The alternatives remain runnable as study variants (`config.DEFAULT_VARIANTS`, products
 under `results/comspec/studies/`), so every number here can be regenerated.
 
@@ -366,6 +368,36 @@ the same photometry and windows): H₂O 1.19, CO₂ 0.97, CO 1.27; its counts at
 nsig are 22 / 32 / 10, with diagonal errors and the 1σ cut.  `dc_main_diag` vs main:
 1.07 / 0.99 / 1.01.
 
+### 7.10 The 2026-09-15 review memo: case revisions (`5741d6611f60`)
+
+The memo `doc/notes_ver260915.xlsx` (38 rows; applied version and before/after table in
+`case_revisions.md`) asked for hand-set changes to individual (comet, phase) groups: a
+continuum window edge moved (2P S1, 47P S2, 124P S3, 2023 R1 S1/S4, 2022 N2 S2, 2023 U1 S2), a
+polynomial order fixed (24P S7/S8, 43P S1, 63P S2, 124P S3, 306P S4, 2024 E1 S2), the N
+brightest points of a window side excluded (124P S1, 2019 U5 S2, 2022 R6 S2, 2023 A3 S2,
+2023 V1 S2, 2024 A1 S1, 2025 R1 S4), a negative continuum accepted (2P S2, 217P S3, 229P S1,
+2019 U5 S1/S2, 2024 E1 S2, 2024 L5 S4), a one-sided continuum accepted (2023 R1 S4, 2025 R2
+S2), flag-`b` rows dropped (10P S1), the brightest emission channels excluded (306P S4), a
+species fitted on fewer channels than the coverage rule demands (2022 N2 S2, 2022 QE78 S1,
+2023 R1 S4, 2024 J2 S1, 2024 L5 S1, 2025 L1 S1, 2025 R1 S1, 2025 W2 S2), two H₂O detections
+rejected as spurious (2023 RS61 S1, 2025 R1 S4), 240P's phases 2–3 merged, and three Afρ
+epochs re-estimated (47P S1 extrapolated, 210P S1–S4 from the outbound law, 217P S1 without
+its outburst frames).  They are data in `spherex_comspec.revisions` (`GroupingConfig` for
+the regrouping, `ztfcomet.config.AFRHO_EPOCH_OVERRIDES` for the dust), applied wherever a
+group is processed, recorded in a `revision` column, in `notes` / `caveats` and on the
+figures; `dc_main_norev` runs without them and reproduces the 2026-09-14 census to the group.
+
+**Effect** (147 fits both times): robust ≥ 3σ H₂O 17 → 18, CO₂ 26 → 28, CO 4 → 4; marginal
+25 / 23 / 9 → 24 / 26 / 9; covered H₂O 113 → 117, CO₂ 98 → 111; comets with a robust detection
+35 → 37 (clean 34 → 36); χ²_ν median 4.56 → 4.24; 9 groups change their H₂O status and 16 their
+CO₂ status, none their CO status.  The gains are single-channel CO₂ values on waived or
+reduced-coverage bands (six new detections at n_eff 1.0–2.7) and stay outside the robust
+census except 2024 E1 S2 (n_eff 2.7) and 2025 R2 S2 (2.7); the two withdrawn H₂O values were
+4.7σ (2023 RS61, χ²_ν 776) and 1.4σ.  Afρ: values for 120 / 124 of the 164 phases (was
+116 / 120 of 165), 217P S1 drops from 124 to 54 cm.  The caveats — waived continua as upper
+bounds of a physical one, the 26 % Δ spread of 240P's merged phase, the symmetric-activity
+assumption behind 210P, the grade-D law behind 47P S1 — are §4 of `case_revisions.md`.
+
 ## 8. Concerns
 
 Resolved on 2026-09-12 (§7.8): **1** the sky annulus is physical (150 000 km, upstream);
@@ -402,10 +434,14 @@ Open:
    same census).
 7. **Rule 3 of the grouping reads the raw `badphot`**, so the assignment does not move with
    the row policy (deliberate; 2025 K1 is the case to check).
+8. **The case revisions are judgements** (§7.10): 34 groups carry hand-set windows, orders,
+   exclusions or waivers, and six CO₂ detections exist only because a check was waived or the
+   coverage rule relaxed.  They are visible in `revision` / `caveats`, reversible through
+   `dc_main_norev`, and have to be re-read whenever the windows, the LSF or the photometry change.
 
 ## 9. Placeholders
 
-Applied: 2 (fluorescence database and CO Swings factor, 2026-09-11), 7, 8, 9, 10, 16, 17
+Applied: 18 (case revisions of the 2026-09-15 review memo, §7.10), 2 (fluorescence database and CO Swings factor, 2026-09-11), 7, 8, 9, 10, 16, 17
 (the 2026-09-12 revision: CV orders, 3σ tiers, no negative cut, GLS, the physical annulus,
 the Δ rule), 4 and 6 (windows and the aperture rule, re-decided on 2026-09-14 by the method
 matrix: 2.55–2.80 µm over 2.30–3.00 µm; one fixed aperture per phase), 5 (`badphot` →

@@ -70,21 +70,31 @@ def _poly_with_sigma(c, cov, x):
     return model, sig
 
 
-def fit_continuum(raw: pd.DataFrame, band: str, cfg: ContinuumConfig) -> dict:
+def fit_continuum(raw: pd.DataFrame, band: str, cfg: ContinuumConfig, windows=None,
+                  rev=None) -> dict:
     """
     Window, sigma-clip and fit the local continuum for one band.
 
     Returns a dict with the fitted model and every piece of bookkeeping the
     validation, the subtraction and the figures need.
+
+    ``windows`` replaces ``BAND_WINDOWS`` (a case revision's effective windows, see
+    :func:`revisions.effective_windows`); ``rev`` is the band's :class:`revisions.BandRevision`:
+    a fixed order, the exclusion of the brightest continuum points on a side, and the
+    acceptance of a one-sided window as given (no extension).
     """
-    b = BAND_WINDOWS[band]
+    W = windows if windows is not None else BAND_WINDOWS
+    b = W[band]
+    exclude = [w["em"] for w in W.values()]
     lam_c = b["lam_c"]
-    order_req = int(cfg.poly_orders.get(band, 2))
+    fixed_order = rev is not None and rev.order is not None
+    order_req = int(rev.order) if fixed_order else int(cfg.poly_orders.get(band, 2))
     wl, y, e = raw.wl.to_numpy(float), raw.flux.to_numpy(float), raw.err.to_numpy(float)
     cont = tuple(b["cont"])
-    cmask = continuum_mask(wl, cont)
+    cmask = continuum_mask(wl, cont, exclude)
     extended = ""
-    if cfg.one_sided_extend_um is not None and cmask.sum() > 0:
+    one_sided_ok = rev is not None and rev.one_sided_ok
+    if cfg.one_sided_extend_um is not None and cmask.sum() > 0 and not one_sided_ok:
         # a window with points on one side only: reach out to `one_sided_extend_um` from the
         # band edge on the empty side (every emission window is still punched out)
         n_blue0 = int((wl[cmask] < b["em"][0]).sum())
@@ -96,13 +106,32 @@ def fit_continuum(raw: pd.DataFrame, band: str, cfg: ContinuumConfig) -> dict:
             hi, extended = b["em"][1] + cfg.one_sided_extend_um, "red"
         if extended:
             cont = (lo, hi)
-            cmask = continuum_mask(wl, cont)
+            cmask = continuum_mask(wl, cont, exclude)
+    # case revision: the N brightest points of a side of the continuum window are
+    # star-contaminated and are taken out before the clipping, which would not catch them
+    # against a sparse baseline.  The reviewer counted them on the validation figure, where
+    # a side shows every point of the window -- those inside a neighbouring band's emission
+    # window included (the red side of the 4.3 um window overlaps the CO band) -- so the N
+    # brightest are ranked over all of them, and the continuum candidates among them are dropped.
+    n_excl = {"blue": 0, "red": 0}
+    if rev is not None and (rev.exclude_top_blue or rev.exclude_top_red):
+        in_win = (wl >= cont[0]) & (wl <= cont[1])
+        for side, n, sel in (("blue", rev.exclude_top_blue, wl < b["em"][0]),
+                             ("red", rev.exclude_top_red, wl > b["em"][1])):
+            if n:
+                idx = np.where(in_win & sel)[0]
+                top = idx[np.argsort(y[idx])[::-1][:int(n)]]
+                drop = top[cmask[top]]
+                cmask[drop] = False
+                n_excl[side] = int(len(drop))
     xc, yc, ec = wl[cmask], y[cmask], e[cmask]
 
     res = dict(band=band, lam_c=lam_c, em=b["em"], cont=cont, order_req=order_req,
                n_cont_avail=int(cmask.sum()), extended=extended,
                n_blue=int((xc < b["em"][0]).sum()), n_red=int((xc > b["em"][1]).sum()),
-               cmask=cmask, xc=xc, yc=yc, ec=ec)
+               cmask=cmask, xc=xc, yc=yc, ec=ec, order_fixed=fixed_order,
+               n_excl_blue=n_excl["blue"], n_excl_red=n_excl["red"],
+               revision=rev.describe() if rev is not None else "")
 
     if len(xc) < 2:
         res.update(method="none", ok=False, reason="fewer than 2 continuum points",
@@ -110,7 +139,10 @@ def fit_continuum(raw: pd.DataFrame, band: str, cfg: ContinuumConfig) -> dict:
                    order_capped=False, bracketed=False, n_cont_used=0, n_clipped=0)
         return res
 
-    if len(xc) < cfg.n_min_poly:
+    # a fixed order (case revision) is fitted on as few as order + 2 points; the default keeps
+    # the two-point fallback below ``n_min_poly``
+    n_min_poly = max(order_req + 2, 3) if fixed_order else cfg.n_min_poly
+    if len(xc) < n_min_poly:
         left, right = xc < b["em"][0], xc > b["em"][1]
         if left.any() and right.any():
             i = np.where(left)[0][np.argmax(xc[left])]
@@ -129,8 +161,8 @@ def fit_continuum(raw: pd.DataFrame, band: str, cfg: ContinuumConfig) -> dict:
     has_right = bool((xc > b["em"][1]).any())
     order_cap = order_req if (has_left and has_right) else 1
     res["order_capped"] = order_cap != order_req
-    order_cap = int(np.clip(order_cap, 1, max(1, len(xc) - 3)))
-    if cfg.order_mode == "cv" and order_cap > 1:
+    order_cap = int(np.clip(order_cap, 1, max(1, len(xc) - (2 if fixed_order else 3))))
+    if cfg.order_mode == "cv" and order_cap > 1 and not fixed_order:
         order_cap = select_order(xc - lam_c, yc, ec, order_cap, cfg)
     res["order_selected"] = order_cap
     order = order_cap
@@ -142,10 +174,10 @@ def fit_continuum(raw: pd.DataFrame, band: str, cfg: ContinuumConfig) -> dict:
             warnings.simplefilter("ignore")
             new = ~np.asarray(sigma_clip(chi, sigma=cfg.sigma, maxiters=1, stdfunc=mad_std,
                                          masked=True).mask, bool)
-        if new.sum() < order + 3 or (new == keep).all():
+        if new.sum() < order + (2 if fixed_order else 3) or (new == keep).all():
             break
         keep = new
-        order = int(np.clip(order_cap, 1, max(1, keep.sum() - 3)))
+        order = int(np.clip(order_cap, 1, max(1, keep.sum() - (2 if fixed_order else 3))))
     c, cov = _wpolyfit(xc[keep] - lam_c, yc[keep], ec[keep], order)
     res.update(method="poly", ok=True, reason="", keep=keep, order_used=order, coeffs=c, cov=cov,
                bracketed=bool((xc[keep] < b["em"][0]).any() and (xc[keep] > b["em"][1]).any()),
@@ -201,14 +233,19 @@ def cv_rmse(x, y, err, order, cfg: ContinuumConfig, seed: int = 0) -> float:
     return float(np.sqrt(np.mean(sq))) if sq else np.nan
 
 
-def validate_fit(fit: dict, cfg: ContinuumConfig) -> dict:
-    """Automatic quality checks -> PASS / WARN / FAIL with the reasons."""
+def validate_fit(fit: dict, cfg: ContinuumConfig, rev=None) -> dict:
+    """Automatic quality checks -> PASS / WARN / FAIL with the reasons.
+
+    A case revision (``rev``) can waive the two hard checks: ``one_sided_ok`` accepts an
+    unbracketed continuum, ``ignore_negative`` a continuum below zero under the band; both
+    are recorded in ``notes``."""
     v = dict(band=fit["band"], method=fit["method"])
     blank = dict(chi2_red=np.nan, rms_mjy=np.nan, err_scale=np.nan, z_shape=np.nan,
                  cv_rmse=np.nan, cv_best_order=np.nan, cont_min=np.nan, cont_min_nsig=np.nan,
                  pass_shape=False, pass_cv=False, pass_bracket=False, pass_positive=False)
     if not fit["ok"]:
-        return {**v, **blank, "verdict": "FAIL", "notes": fit["reason"]}
+        note = fit["reason"] + ("; case revision: " + fit["revision"] if fit.get("revision") else "")
+        return {**v, **blank, "verdict": "FAIL", "notes": note}
 
     keep = fit["keep"]
     x = fit["xc"][keep] - fit["lam_c"]
@@ -252,9 +289,18 @@ def validate_fit(fit: dict, cfg: ContinuumConfig) -> dict:
 
     notes = []
     if not v["pass_bracket"]:
-        notes.append("EXTRAPOLATED (no continuum on one side)")
+        if rev is not None and rev.one_sided_ok:
+            v["pass_bracket"] = True
+            notes.append("one-sided continuum accepted as fitted (case revision)")
+        else:
+            notes.append("EXTRAPOLATED (no continuum on one side)")
     if not v["pass_positive"]:
-        notes.append(f"continuum negative by {v['cont_min_nsig']:.1f} sigma under the band")
+        if rev is not None and rev.ignore_negative:
+            v["pass_positive"] = True
+            notes.append(f"continuum negative by {v['cont_min_nsig']:.1f} sigma under the band "
+                         "-- accepted (case revision)")
+        else:
+            notes.append(f"continuum negative by {v['cont_min_nsig']:.1f} sigma under the band")
     if not v["pass_shape"]:
         notes.append(f"half-window residual offset {v['z_shape']:.1f} sigma")
     if not v["pass_cv"]:
@@ -266,12 +312,16 @@ def validate_fit(fit: dict, cfg: ContinuumConfig) -> dict:
                      f"{fit['cont'][0]:.2f}-{fit['cont'][1]:.2f} um")
     if fit.get("order_capped"):
         notes.append(f"order capped {fit['order_req']}->1 (one-sided continuum)")
+    elif fit.get("order_fixed") and fit["method"] == "poly":
+        notes.append(f"order {fit['order_used']} fixed (case revision)")
     elif fit["order_used"] != fit["order_req"] and fit["method"] == "poly":
         notes.append(f"order {fit['order_used']} of max {fit['order_req']} by CV"
                      if cfg.order_mode == "cv" else
                      f"order reduced {fit['order_req']}->{fit['order_used']}")
     if np.isfinite(v["err_scale"]) and v["err_scale"] > 3:
         notes.append(f"formal errors understate scatter by x{v['err_scale']:.0f}")
+    if fit.get("revision"):
+        notes.append("case revision: " + fit["revision"])
 
     hard = v["pass_bracket"] and v["pass_positive"]
     soft = v["pass_shape"] and v["pass_cv"]
@@ -460,9 +510,15 @@ def insufficient(raw: pd.DataFrame, cfg: ContinuumConfig) -> Optional[str]:
 
 
 def process_group(raw: pd.DataFrame, target: str, r_ap_km: float, phase: int, epoch: int,
-                  cfg: ContinuumConfig, flux_space: str = "physical") -> Dict[str, object]:
+                  cfg: ContinuumConfig, flux_space: str = "physical", rev=None) -> Dict[str, object]:
     """
     Steps 2-6 for one (target, aperture, phase): fit, validate and subtract every band.
+
+    ``rev`` is the group's :class:`revisions.CaseRevision` (``None`` for none): its windows
+    replace the module constants for every band of the group, its per-band directives are
+    passed to :func:`fit_continuum` / :func:`validate_fit`, rows carrying a dropped source
+    flag leave the band before the fit, and the brightest emission channels it excludes are
+    labelled ``role = "excluded"`` (out of the production-rate fit and the band flux).
 
     Returns
     -------
@@ -470,16 +526,40 @@ def process_group(raw: pd.DataFrame, target: str, r_ap_km: float, phase: int, ep
         ``fits``, ``valid``, ``subs`` keyed by band, ``summary`` (one row per band)
         and ``points`` (the plotted neighbourhood of every band, for the file).
     """
+    from .revisions import effective_windows
     raw = raw.copy()
     raw.attrs["flux_space"] = flux_space
-    fits = {b: fit_continuum(raw, b, cfg) for b in BAND_WINDOWS}
-    vals = {b: validate_fit(fits[b], cfg) for b in BAND_WINDOWS}
-    subs = {b: subtract_continuum(raw, fits[b]) for b in BAND_WINDOWS}
-    summary = pd.DataFrame([aggregate_band(subs[b], fits[b], vals[b], target, r_ap_km, phase,
-                                           epoch, flux_space, cfg) for b in BAND_WINDOWS])
+    W = effective_windows(rev)
+    fits, vals, subs, revs = {}, {}, {}, {}
+    for b in BAND_WINDOWS:
+        br = rev.band(b) if rev is not None else None
+        revs[b] = br
+        raw_b = raw
+        if br is not None and br.drop_flags and "sourceflag" in raw:
+            raw_b = raw[~raw.sourceflag.astype(str).isin(br.drop_flags)].reset_index(drop=True)
+            raw_b.attrs["flux_space"] = flux_space
+        fits[b] = fit_continuum(raw_b, b, cfg, W, br)
+        vals[b] = validate_fit(fits[b], cfg, br)
+        sub = subtract_continuum(raw_b, fits[b])
+        if br is not None and br.exclude_top_emission:
+            em = sub.in_emission.to_numpy() & np.isfinite(sub.emis_mjy.to_numpy(float))
+            idx = np.where(em)[0]
+            drop = idx[np.argsort(sub.emis_mjy.to_numpy(float)[idx])[::-1][:int(br.exclude_top_emission)]]
+            sub.loc[sub.index[drop], "role"] = "excluded"
+            sub.loc[sub.index[drop], "in_emission"] = False
+        subs[b] = sub
+    rows = []
+    for b in BAND_WINDOWS:
+        row = aggregate_band(subs[b], fits[b], vals[b], target, r_ap_km, phase, epoch, flux_space, cfg)
+        row["revision"] = revs[b].describe() if revs[b] is not None else ""
+        rows.append(row)
+    summary = pd.DataFrame(rows)
     chunks = []
     for b, d in subs.items():
-        lo, hi = BAND_WINDOWS[b]["cont"]
+        # the saved neighbourhood covers the continuum window *and* the emission window: a
+        # revised continuum window need not bracket the band (2023 R1 phase 4)
+        lo = min(W[b]["cont"][0], W[b]["em"][0])
+        hi = max(W[b]["cont"][1], W[b]["em"][1])
         m = (d.wl >= lo - cfg.plot_margin_um) & (d.wl <= hi + cfg.plot_margin_um)
         if m.any():
             chunks.append(d[m])

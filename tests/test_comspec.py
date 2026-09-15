@@ -457,3 +457,105 @@ if __name__ == "__main__":
             traceback.print_exc()
     print(f"\n{len(tests) - failed}/{len(tests)} passed")
     raise SystemExit(1 if failed else 0)
+
+
+# ----------------------------------------------------------------- case revisions (2026-09-15)
+def _revision_spectrum(seed=0, n_blue=8, n_red=8, star=None, negative=False):
+    """A flat 2.7 um continuum with the H2O band on top; ``star`` lifts that many blue points."""
+    rng = np.random.default_rng(seed)
+    wl = np.concatenate([np.linspace(2.32, 2.53, n_blue), np.linspace(2.57, 2.79, 6), np.linspace(2.82, 2.98, n_red)])
+    flux = 10.0 + rng.normal(0, 0.2, len(wl))
+    flux[(wl > 2.57) & (wl < 2.79)] += 5.0
+    if negative:
+        flux -= 12.0
+    if star:
+        flux[:star] += 30.0
+    flags = np.array(["0"] * len(wl), dtype=object)
+    if star:
+        flags[:star] = "b"
+    return pd.DataFrame(dict(wl=wl, flux=flux, err=np.full(len(wl), 0.2), distcorr_factor=1.0,
+                             sourceflag=flags, badphot=False, frac_badpix_ap=0.0, r_hel=2.0, r_obs=1.5,
+                             jd_utc=2461000.0, epoch=1, wlwidth=0.02, filename="f", detector=4,
+                             v_hel_kms=0.0, flux_raw=flux, err_raw=0.2))
+
+
+def test_case_revision_windows_orders_and_exclusions():
+    from spherex_comspec.config import ContinuumConfig
+    from spherex_comspec.continuum import fit_continuum
+    from spherex_comspec.revisions import BandRevision, CaseRevision, effective_windows
+    raw = _revision_spectrum(star=3)
+    cfg = ContinuumConfig()
+    plain = fit_continuum(raw, "2.7um", cfg)
+    rev = CaseRevision("T", 1, {"2.7um": BandRevision(exclude_top_blue=3, order=1, cont_hi=2.90)})
+    W = effective_windows(rev)
+    assert W["2.7um"]["cont"] == (2.30, 2.90) and W["4.3um"] == effective_windows(None)["4.3um"]
+    fit = fit_continuum(raw, "2.7um", cfg, W, rev.band("2.7um"))
+    assert fit["n_excl_blue"] == 3 and fit["order_used"] == 1 and fit["order_fixed"]
+    assert fit["cont"][1] == 2.90 and fit["n_cont_avail"] == plain["n_cont_avail"] - 3 - int((raw.wl > 2.90).sum())
+    # the three star points were the brightest blue ones: the revised continuum sits at 10, the plain one above it
+    from spherex_comspec.continuum import continuum_at
+    assert abs(continuum_at(fit, np.array([2.68]))[0][0] - 10.0) < 0.3
+    assert abs(continuum_at(plain, np.array([2.68]))[0][0] - 10.0) > 0.3     # the stars bent the plain fit
+    assert fit["revision"]
+
+
+def test_case_revision_waivers_and_flag_drop():
+    from spherex_comspec.config import ContinuumConfig
+    from spherex_comspec.continuum import process_group, validate_fit, fit_continuum
+    from spherex_comspec.revisions import BandRevision, CaseRevision
+    cfg = ContinuumConfig()
+    neg = _revision_spectrum(negative=True)
+    v0 = validate_fit(fit_continuum(neg, "2.7um", cfg), cfg)
+    assert v0["verdict"] == "FAIL" and not v0["pass_positive"]
+    br = BandRevision(ignore_negative=True)
+    v1 = validate_fit(fit_continuum(neg, "2.7um", cfg, None, br), cfg, br)
+    assert v1["pass_positive"] and v1["verdict"] in ("PASS", "WARN") and "accepted (case revision)" in v1["notes"]
+    # a one-sided window accepted as given: no extension, no EXTRAPOLATED failure
+    one = _revision_spectrum(n_red=0)
+    br = BandRevision(one_sided_ok=True, order=1)
+    f = fit_continuum(one, "2.7um", cfg, None, br)
+    v = validate_fit(f, cfg, br)
+    assert f["extended"] == "" and not f["bracketed"] and v["pass_bracket"] and v["verdict"] != "FAIL"
+    # flag-b rows leave the band before the fit, and the brightest emission channels can be excluded
+    star = _revision_spectrum(star=3)
+    rev = CaseRevision("T", 1, {"2.7um": BandRevision(drop_flags=("b",), exclude_top_emission=2)})
+    out = process_group(star, "T", 20000.0, 1, 1, cfg, "physical", rev=rev)
+    sub = out["subs"]["2.7um"]
+    assert not (sub.sourceflag.astype(str) == "b").any()
+    assert (sub.role == "excluded").sum() == 2 and int(out["summary"].loc[out["summary"].band == "2.7um", "n_emission"].iloc[0]) == 4
+    assert "case revision" in out["summary"].loc[out["summary"].band == "2.7um", "notes"].iloc[0]
+    assert out["summary"].revision.iloc[0]
+
+
+def test_case_revision_coverage_and_rejection():
+    from spherex_comspec.revisions import BandRevision, CaseRevision
+    pts, p, truth = _synthetic_points()
+    cfg = FitConfig()
+    # keep two CO2 channels only: the key-range rule (2 in 4.20-4.30) can fail, the revision covers it
+    co2 = pts.band == "4.3um"
+    keep = pts.index[~co2].tolist() + pts.index[co2][:1].tolist()
+    thin = pts.loc[keep].reset_index(drop=True)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        base = fit_production_rates(thin, p, cfg)
+        rev = CaseRevision("T", 1, {"4.3um": BandRevision(min_channels=1)})
+        fit = fit_production_rates(thin, p, cfg, rev=rev)
+        rej = fit_production_rates(pts, p, cfg, rev=CaseRevision("T", 1, reject=("CO2",)))
+    k = list(fit.species).index("CO2")
+    assert not base.covered[k] and fit.covered[k] and fit.revision
+    assert rej.status[k] == "rejected" and np.isnan(rej.Q[k]) and np.isfinite(rej.Q_fit[k])
+    assert any("rejected" in c for c in rej.caveats()) and rej.to_row()["Q_CO2_status"] == "rejected"
+    assert np.isnan(rej.ratio("CO2", "H2O")[0])
+
+
+def test_case_revision_registry_is_consistent():
+    from spherex_comspec.config import BAND_WINDOWS
+    from spherex_comspec.revisions import CASE_REVISIONS, revision_for, REVISIONS
+    assert len(REVISIONS) == len(CASE_REVISIONS)
+    for r in CASE_REVISIONS:
+        assert set(r.bands) <= set(BAND_WINDOWS) and set(r.reject) <= {"H2O", "CO2", "CO"}
+        for b in r.bands.values():
+            assert b.order in (None, 1, 2, 3) and b.exclude_top_blue >= 0 and b.exclude_top_red >= 0
+    assert revision_for("2019 U5", 2).band("2.7um").exclude_top_blue == 2
+    assert revision_for("47P", 1) is None and revision_for("47P", 1, enabled=False) is None   # memo-only entry
+    assert revision_for("2P", 1, enabled=False) is None

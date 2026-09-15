@@ -43,6 +43,7 @@ spherex-comet/
     ├── dataio.py              photometry reading, aperture choice, flag policy, all file I/O
     ├── grouping.py            28-day epochs -> single-state phase groups (dynamic programme)
     ├── continuum.py           local polynomial continuum, validation, subtraction
+    ├── revisions.py           the per-(target, phase) case revisions of the 2026-09-15 review memo
     ├── fluorescence.py        g-factor templates and the CO Swings factor from data/fluorescence
     ├── gasmodel.py            Haser + Yamamoto + fluorescence  (Layers 0-4)
     ├── instrument.py          SPHEREx channel bandpass          (Layer 5, unchanged)
@@ -184,6 +185,26 @@ the method matrix of `notebooks/comspec/method_matrix.py`, `doc/comspec/pipeline
 | channels | every channel enters the solve | channels > 1σ below zero dropped |
 | H₂O hot bands | fallback only inside 3 au (`FitConfig.h2o_hot_max_rh_au`) | no cap |
 
+### 6. Case revisions (`revisions.py`, 2026-09-15)
+
+The review memo `doc/notes_ver260915.xlsx` (applied version: `doc/comspec/case_revisions.md`)
+asked for per-(target, phase) changes that no global rule expresses: a continuum window edge
+moved, a polynomial order fixed, the N brightest points of a window side excluded (stars the
+clipping cannot catch against a sparse baseline), a negative or one-sided continuum accepted
+as fitted, rows with a source flag dropped from one band, the brightest emission channels of
+a band kept out of the fit, a species fitted on fewer channels than `KEY_RANGES` demands, or a
+detection rejected as spurious.  They are data — `revisions.CASE_REVISIONS`, one
+`CaseRevision` per group with a `BandRevision` per band — and every place that processes a
+group applies them (`pipeline.run_variant`, `plotting.save_variant_figures`,
+`continuum.process_group`, `fitting.fit_production_rates`), so the batch run, the studies and
+the figures agree.  `continuum_summary.csv` and `gas_fit.csv` carry the directive in a
+`revision` column and repeat it in `notes` / `caveats`; excluded emission channels have
+`role = "excluded"` in the point files; a rejected species has `Q_X_status = "rejected"`
+(the fitted value stays in `Q_X_fit`, `Q_X` is blank, and it is outside every census).  The
+regrouping of 240P (phases 2–3 merged) is a `GroupingConfig` entry (`manual_edges`,
+`delta_tol_exempt`), the ZTF Afρ directives (47P, 210P, 217P) live in
+`ztfcomet.config.AFRHO_EPOCH_OVERRIDES`.  `dc_main_norev` is the same run without them.
+
 ## Distance correction — how Q stays physical
 
 The revised photometry carries `flux_distcorr_mjy = F × r_h² × Δ²`, the flux the
@@ -224,6 +245,7 @@ the groups detected in both spaces; 0.48 for the 2026-09-08 baseline).
 | `dc_main_gauss` | fluorescence | baseline | distance-corrected | the emission model before 2026-09-11 (Gaussian bands, Ootsubo g-factors, constant g(CO)): what the fluorescence database changes |
 | `dc_main_diag` | errors | baseline | distance-corrected | diagonal errors instead of GLS: what the continuum covariance changes |
 | `dc_ap_snr` | rules | baseline | distance-corrected | the S/N-driven per-target aperture of 2026-09-12 against the fixed per-phase rule |
+| `dc_main_norev` | rules | baseline | distance-corrected | the main configuration without the case revisions of the 2026-09-15 memo (`Variant.revisions=False`): what the hand-set windows, orders, exclusions, waivers and rejections change |
 | `dc_rules_previous` | rules | baseline | distance-corrected | the 2026-09-11 rules a variant can carry (r_h aperture rule per target, fixed 3/2/2 orders, no window extension, 1σ cut and tier, diagonal errors, no hot-band cap); the windows are shared |
 
 Each variant is a complete, independent run under `data/comspec/emission/`, `results/comspec/` and `fig/comspec/` for the main variant and under

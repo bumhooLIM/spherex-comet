@@ -218,18 +218,21 @@ def subdivide(target: str, ep: pd.DataFrame, cfg: GroupingConfig):
         n_break, link = cut_costs(r_hel, {b: g[b].to_numpy() for b in EMISSION_WINDOWS}, cfg, r_obs)
         edges = cfg.manual_edges.get(key, {}).get("out" if g.arc.iloc[0] else "in")
         manual = edges is not None
+        # rule 1b is switched off for the targets in ``delta_tol_exempt`` (240P, whose merged
+        # phases 2-3 of the 2026-09-15 memo span Delta by ~30 %)
+        delta_tol = None if key in cfg.delta_tol_exempt else cfg.delta_tol
         if manual:
             segs = []
             for a, b in manual_segments(r_hel, edges):
                 # rule 1b inside a hand-set r_h bin: subdivide by Delta only
-                if cfg.delta_tol is not None:
+                if delta_tol is not None:
                     for a2, b2 in split_groups(r_hel[a:b], w[a:b], n_break[a:b], link[a:b], np.inf,
-                                               r_obs[a:b], cfg.delta_tol):
+                                               r_obs[a:b], delta_tol):
                         segs.append((a + a2, a + b2))
                 else:
                     segs.append((a, b))
         else:
-            segs = split_groups(r_hel, w, n_break, link, cfg.rh_tol, r_obs, cfg.delta_tol)
+            segs = split_groups(r_hel, w, n_break, link, cfg.rh_tol, r_obs, delta_tol)
         for a, b in segs:
             n += 1
             label[idx[a:b]] = n
@@ -326,7 +329,8 @@ def regroup_all(targets: Sequence[str] | None = None, cfg: GroupingConfig | None
     auto = new[~new.manual]
     assert (auto.spread < cfg.rh_tol).all(), "an automatic group violates rule 1"
     if cfg.delta_tol is not None:
-        assert (new.delta_spread < cfg.delta_tol).all(), "a group violates rule 1b (Delta spread)"
+        bound = new[~new.target.isin(cfg.delta_tol_exempt)]
+        assert (bound.delta_spread < cfg.delta_tol).all(), "a group violates rule 1b (Delta spread)"
     log.info("regrouped %d targets: %d epochs -> %d phases (%d epochs subdivided, %d manual "
              "groups) in %.1f s", len(targets), len(old), len(new), int((n_sub > 1).sum()),
              int(new.manual.sum()), time.time() - t0)
