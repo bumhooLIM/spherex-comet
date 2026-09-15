@@ -1,9 +1,9 @@
 # Pipeline decisions — SPHEREx comet gas production rates
 
-**Date:** 2026-09-14 (first written 2026-09-09) · **Package:** `spherex-comspec/`
-(`spherex_comspec` 1.2.0, run hash `a6463b4c610b`) · **Input:** `data/apphot/` (revised
+**Date:** 2026-09-14 (first written 2026-09-09) · **Package:** `spherex_comspec/`
+(`spherex_comspec` 1.2.0, run hash `a6463b4c610b`) · **Input:** `results/apphot/photometry/` (revised
 `spherex_apphot` photometry, config `9fcc7ea3871a`; 68 comets, 27 797 exposures) ·
-**Result:** `results/gas_fit.csv`.
+**Result:** `results/comspec/gas_fit.csv`.
 
 This is the record of what the pipeline does, which alternatives were tried, why the
 current configuration was kept as the most robust one, what remains a concern, and
@@ -23,7 +23,7 @@ covered.  Six configurations were run end to end and compared group by group
 
 | choice | value | why it won |
 |---|---|---|
-| photometry | revised set (`data/apphot/`) | the previous set zeroed bad and star-adjacent pixels inside the aperture, which biased Q(CO₂) low by 13 % and cost 8 robust CO detections (`apphot_comparison.md`) |
+| photometry | revised set (`results/apphot/photometry/`) | the previous set zeroed bad and star-adjacent pixels inside the aperture, which biased Q(CO₂) low by 13 % and cost 8 robust CO detections (`apphot_comparison.md`) |
 | `badphot` rule | drop a row only when `frac_badpix_ap > 0.05` | the strict rule (any bad pixel) removed 52 % of 24P's rows for no change in Q; the lenient rule analyses 154 instead of 150 groups and fits 138 instead of 135, with Q identical (§7.2) |
 | source flags | drop `a` (G < 13 star within r_ap + 2 FWHM), keep `b`, `c`, `d` | dropping `a` costs 3 band-rows and nothing in Q; dropping `b` removes 28 fits and a third of the channels, again without moving Q (§7.1) |
 | continuum flux space | distance-corrected (F × r_h² Δ²) | the channels of one group span up to 166 % in r_h² Δ²; the corrected continuum removes that gradient and changes Q by ≤ 1.35σ against the physical-space fit (§7.3) |
@@ -42,11 +42,11 @@ It analyses every one of the 68 comets, fits 147 (comet, phase) groups, and yiel
 the hot-band fallback stops at 3 au), CO₂ 26 (25 clean), CO 4 (2 clean); a further 19
 comets have only marginal (1–3σ) values (H₂O 25, CO₂ 23, CO 9 groups).
 The alternatives remain runnable as study variants (`config.DEFAULT_VARIANTS`, products
-under `results/studies/`), so every number here can be regenerated.
+under `results/comspec/studies/`), so every number here can be regenerated.
 
 ## 1. Inputs
 
-`data/apphot/` carries one row per (exposure, aperture) with the revised
+`results/apphot/photometry/` carries one row per (exposure, aperture) with the revised
 treatment: predicted ephemeris centres, a fixed 15–20 px sky annulus, bad pixels
 masked with an effective-area correction, Gaia sources flagged (`sourceflag`
 `a`/`b`/`c`/`d`) rather than masked, a distance-corrected flux column and both a
@@ -62,7 +62,7 @@ spread < 10 %, a perihelion passage split (resolved when both sides move by
 cuts placed in gaps (link 0.05 au), manual edges for 24P and 2024 E1.  Result: 141
 epochs → **174 phases**, identical to the previous notebook's map for 66 of 68
 comets (2025 K1 and 2025 L1 differ because rule 3 reads band sampling through
-the new `badphot`).  `results/phase_map.csv`, `phase_cuts.csv`.
+the new `badphot`).  `results/comspec/phase_map.csv`, `phase_cuts.csv`.
 
 **Rule 1b (2026-09-12).**  The observer distance is bounded too: `(max − min)/mean`
 of Δ below 20 % inside every group (`GroupingConfig.delta_tol`), including the
@@ -80,7 +80,7 @@ enters the choice.  The upstream photometry refuses only apertures below the PSF
 2014 UN271 (Δ ≈ 14–15 au, where 60 000 km is 0.9 px; coverage 50 %).  Over the 193 phases:
 99 at 20 000 km, 73 at 40 000 km, 21 enlarged to 60 000 km (all beyond 3 au, Δ > 5.9 au);
 22 comets use two apertures across their phases.  The model's `rho_ap_km` follows the
-phase.  `results/apertures.csv` records the radius, the reason (`near`, `far`,
+phase.  `results/comspec/apertures.csv` records the radius, the reason (`near`, `far`,
 `far->enlarged`), the coverage, the phase's median geometry and the radius in pixels.
 
 The rule replaces the S/N-driven per-target aperture of 2026-09-12 (kept as
@@ -129,7 +129,7 @@ the model is linear in Q and the three species are solved jointly by weighted
 least squares over every accepted emission channel, each at its own geometry and
 bandpass.  **Since 2026-09-11 the g-factors and band shapes are the project's
 reconstruction of the GSFC fluorescence database** (`data/fluorescence/`,
-`doc/fluorescence_database.md`; validated to ~10 % line by line against the published
+`doc/comspec/fluorescence_database.md`; validated to ~10 % line by line against the published
 values) and **g(CO) follows the comet's heliocentric velocity** (Swings effect: 1.92 × 10⁻⁴ s⁻¹
 at v_h = 0, 25–31 % more for |v_h| ≳ 10 km/s), with v_h of every pointing derived from the
 ephemeris r_h(t) of the photometry (agrees with JPL Horizons to 0.05 km/s at worst).  The
@@ -167,7 +167,7 @@ and tier, diagonal errors, no cap).
 
 All comparisons are group by group against `dc_main`; "Q ratio" is the median
 over groups detected in both runs with its 16–84 % range; "max" is the largest
-shift in units of the larger error.  Tables: `results/studies/flag_policy_*.csv`,
+shift in units of the larger error.  Tables: `results/comspec/studies/flag_policy_*.csv`,
 `distcorr_effect_*.csv`, `apphot_comparison/`.
 
 ### 7.1 Source flags
@@ -235,7 +235,7 @@ the 4.3 µm band of the brightest comets by 10–40 %.
 `dc_main_gauss` re-runs the main configuration with the previous emission model
 (eight Gaussian bands, Ootsubo et al. 2012 g-factors, constant g(CO) = 2.6 × 10⁻⁴)
 and reproduces the 2026-09-09 census exactly.  Against it, the main run with the
-reconstructed database (`doc/fluorescence_database.md`; H₂O ν₃ 3.14 × 10⁻⁴, CO₂ ν₃
+reconstructed database (`doc/comspec/fluorescence_database.md`; H₂O ν₃ 3.14 × 10⁻⁴, CO₂ ν₃
 2.71 × 10⁻³, CO 1.92 × 10⁻⁴ s⁻¹ at v_h = 0 and 25–31 % more beyond 10 km/s) changes
 the production rates of the groups detected in both by (median, 16–84 %):
 
@@ -270,7 +270,7 @@ Groups 174 → 193, fits 138 → 151, apertures changed for 64 of 68 targets (60
 14 targets, 100 000 km for one; the PSF bound relaxed for 7 distant targets, three
 crowded fields at their smallest bounded aperture).
 
-**Annulus alone** (`results/studies/annulus_previous/`: the same pipeline on the archived
+**Annulus alone** (`results/comspec/studies/annulus_previous/`: the same pipeline on the archived
 photometry, paired on the 133 groups whose aperture did not change): Q ratios of
 1.000 for CO₂ and CO and 1.001 for H₂O overall — the ring only moves for comets inside
 ~1.6 au, and there the four groups inside 1 au gain 4 % in Q(H₂O).  The continuum
@@ -323,7 +323,7 @@ comets with a clean detection 33 → 34.  χ²_ν scales with the aperture in pi
 comets carry the LSF/band-shape systematic (concern 1).  The upstream photometry was not
 rerun: the three radii are in every table since 2026-09-12.
 
-**Method matrix** (`notebooks/method_matrix.py`; `results/studies/method_matrix/matrix.csv`,
+**Method matrix** (`notebooks/comspec/method_matrix.py`; `results/comspec/studies/method_matrix/matrix.csv`,
 54 runs of the main variant on the fixed apertures, each in an isolated tree).  Factors:
 windows (the 2026-09-12 set; the 2026-09-11 set; eight intermediates over the 2.7 µm
 emission edge 2.50 / 2.55 / 2.60 µm, the H₂O continuum 2.20–3.10 / 2.30–3.00 / 2.45–3.00 µm
@@ -410,7 +410,7 @@ Applied: 2 (fluorescence database and CO Swings factor, 2026-09-11), 7, 8, 9, 10
 the Δ rule), 4 and 6 (windows and the aperture rule, re-decided on 2026-09-14 by the method
 matrix: 2.55–2.80 µm over 2.30–3.00 µm; one fixed aperture per phase), 5 (`badphot` →
 `frac_badpix_ap > 0.05`).
-Open, in priority order (`results/placeholders.csv`, `config.PLACEHOLDERS`):
+Open, in priority order (`results/comspec/placeholders.csv`, `config.PLACEHOLDERS`):
 
 | priority | placeholder | current value | evidence | update |
 |---|---|---|---|---|
@@ -421,16 +421,16 @@ Open, in priority order (`results/placeholders.csv`, `config.PLACEHOLDERS`):
 
 ## 10. Products
 
-`results/gas_fit.csv` (one row per comet and phase; columns in `results/README.md`),
-`results/gas_fit_lines/`, `results/continuum_summary.csv`, `skipped_groups.csv`,
+`results/comspec/gas_fit.csv` (one row per comet and phase; columns in `results/README.md`),
+`results/comspec/gas_fit_lines/`, `results/comspec/continuum_summary.csv`, `skipped_groups.csv`,
 `not_fitted.csv`, `apertures.csv`, `phase_map.csv`, `phase_cuts.csv`,
 `placeholders.csv`, `run.meta.json`, `afrho_ztf.csv` (the ZTF dust context -- A(0°)fρ at
-each phase's ⟨r_h⟩ from the `ztf-comet` trends, attached to `gas_fit.csv` and
-`phase_map.csv` as the `afrho_*` columns by `scripts/attach_afrho_ztf.py`);
-`data/phase_assignment.csv`, `data/emission/`;
-`fig/emission_model/`, `fig/cont_subtract/`, `fig/phase_group/`,
-`fig/summary_Q_vs_rhel.png`, `fig/summary_mixing_ratios.png`.  Every study variant
-has the same set under `results/studies/<variant>/`, `data/studies/`, `fig/studies/`;
-the cross-variant tables and figures sit directly in `results/studies/` and
-`fig/studies/`; `results/studies/method_matrix/matrix.csv` (+ `.jsonl`) is the 2026-09-14
-method matrix of §7.9, regenerated by `notebooks/method_matrix.py`.  Everything older is in `_archive/`.
+each phase's ⟨r_h⟩ from the `ztfcomet` (the ZTF stage) trends, attached to `gas_fit.csv` and
+`phase_map.csv` as the `afrho_*` columns by `scripts/comspec/attach_afrho_ztf.py`);
+`data/comspec/phase_assignment.csv`, `data/comspec/emission/`;
+`fig/comspec/emission_model/`, `fig/comspec/cont_subtract/`, `fig/comspec/phase_group/`,
+`fig/comspec/summary_Q_vs_rhel.png`, `fig/comspec/summary_mixing_ratios.png`.  Every study variant
+has the same set under `results/comspec/studies/<variant>/`, `data/comspec/studies/`, `fig/comspec/studies/`;
+the cross-variant tables and figures sit directly in `results/comspec/studies/` and
+`fig/comspec/studies/`; `results/comspec/studies/method_matrix/matrix.csv` (+ `.jsonl`) is the 2026-09-14
+method matrix of §7.9, regenerated by `notebooks/comspec/method_matrix.py`.  Everything older is in `_archive/`.

@@ -1,5 +1,11 @@
 # Primitive Code Analysis — `ztf-comet` + `ztf-sso-query`
 
+> **Provenance note (2026-09-15).** This review describes the two pre-merge projects as they
+> stood on 2026-09-07; every path below refers to that layout.  The code it reviews is
+> superseded by the `ztfcomet` package (now the ZTF stage of `spherex-comet`); the pre-merge
+> notebooks it cites are kept, outputs stripped, in `_archive/legacy/ztf/`.  The defects are
+> pinned by `tests/test_ztfcomet.py` (`test_regression_c*`).
+
 **Date:** 2026-09-07
 **Scope:** `/Users/bumhoo7/Desktop/claude/ztf-comet` and `/Users/bumhoo7/Desktop/repo/ztf-sso-query`
 **Purpose:** Baseline review before merging both trees into a single `ztfcomet` repository.

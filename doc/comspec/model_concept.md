@@ -135,7 +135,7 @@ $$F_\lambda^{\text{gas}}(\lambda) = \sum_X \sum_b \left[ N_{ap,X} \cdot g_b(r_h)
 
 where $\Phi_b$ is the stored unit\-normalized profile. This preserves band shape and hot\-band structure at the cost of one precomputation, and keeps the runtime cost of a synthetic spectrum at the level of a few array operations. It also makes the model trivially invertible, since $F$ is linear in each $Q$.
 
-**Implemented (2026-09-11).** Option C is what `spherex-comspec` now runs, with the templates taken from the project's own reconstruction of the GSFC database (`data/fluorescence/`, `doc/fluorescence_database.md`) rather than from PSG: one spectral density $g_\lambda(\lambda; T_{\rm rot})$ per species (all bands at once, so no per\-band bookkeeping), plus a velocity\-dependent factor for CO because its $g$ changes by 25–31 % with the heliocentric velocity (Swings effect) while every other band changes by < 1 %.
+**Implemented (2026-09-11).** Option C is what `spherex-comspec` now runs, with the templates taken from the project's own reconstruction of the GSFC database (`data/fluorescence/`, `doc/comspec/fluorescence_database.md`) rather than from PSG: one spectral density $g_\lambda(\lambda; T_{\rm rot})$ per species (all bands at once, so no per\-band bookkeeping), plus a velocity\-dependent factor for CO because its $g$ changes by 25–31 % with the heliocentric velocity (Swings effect) while every other band changes by < 1 %.
 
 ### 2\.3 The dominant low\-resolution problem: $\mathrm{H_2O}$ hot\-band contamination of CO
 

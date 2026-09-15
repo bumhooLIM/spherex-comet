@@ -43,12 +43,12 @@ less for a large aperture), so the far annulus removes **7.8%** of the coma
 flux at 10k and **11.8%** at 40k.  Small, constant for a given geometry and
 slope, and exactly correctable: multiply by 1/[1 − (2−m)/2 (ρ/r_med)^m]
 with m from the radial profile (≈ 1 for this survey to 40,000 km,
-`doc/profile_survey_1rho.md`).  Method 1 approximates the definition of
+`doc/ztf/profile_survey_1rho.md`).  Method 1 approximates the definition of
 Afρ and its error is a known factor of 1.08–1.13.
 
 Its weakness is not the coma in the annulus; it is the accuracy of the sky
 *level* itself when the aperture is sky-dominated
-(`doc/afrho_aperture_systematics.md`).  That is a separate problem, and
+(`doc/ztf/afrho_aperture_systematics.md`).  That is a separate problem, and
 the local annulus does not solve it.
 
 ## Method 2: local annulus at the aperture edge

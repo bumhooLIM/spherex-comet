@@ -1,27 +1,31 @@
 # `spherex_apphot` — SPHEREx comet aperture photometry
 
-Aperture photometry for the SPHEREx comet cutout dataset.  A rewrite of the
-single-file prototype (now in `legacy/`) following the review in
-[`doc/code_review_primitive.md`](../doc/code_review_primitive.md); what changed
-and why is in [`doc/pipeline_upgrade_notes.md`](../doc/pipeline_upgrade_notes.md).
+Aperture photometry for the SPHEREx comet cutout dataset — the second stage of the
+`spherex-comet` project (`ztfcomet` → `spherex_apphot` → `spherex_comspec`).  A rewrite
+of the single-file prototype (now in `_archive/legacy/apphot/`) following the review in
+[`doc/apphot/code_review_primitive.md`](../doc/apphot/code_review_primitive.md); what changed
+and why is in [`doc/apphot/pipeline_upgrade_notes.md`](../doc/apphot/pipeline_upgrade_notes.md).
 
 ---
 
 ## Layout
 
 ```
-spherex-apphot/
-├── main.py                  batch driver — photometry only, never plots
-├── make_figures.py          all figures for already-processed targets
-├── extract_targets.py       build the per-target FITS tree from the flat archive
-├── build_gaia_cache.py      one-off Gaia declination cache builder
-├── tests/test_pipeline.py   unit tests (no pytest required)
-├── legacy/                  the superseded prototype, kept for the review only
+spherex-comet/
+├── scripts/apphot/main.py              batch driver — photometry only, never plots
+├── scripts/apphot/make_figures.py      all figures for already-processed targets
+├── scripts/apphot/extract_targets.py   build the per-target FITS tree from the flat archive
+├── scripts/apphot/build_gaia_cache.py  one-off Gaia declination cache builder
+├── scripts/apphot/h5cut2fits.py        the HDF5 cutout archive -> individual FITS (data preparation)
+├── notebooks/apphot/main.ipynb         end-to-end validation on the sample data
+├── notebooks/apphot/build_db_filtered.ipynb   db.parq -> db_filtered.parq (data preparation)
+├── tests/test_apphot_pipeline.py       unit tests (pytest, or run the file directly)
+├── _archive/legacy/apphot/             the superseded prototype, kept for the review only
 └── spherex_apphot/
     ├── config.py            every tunable number, frozen and hashable
     ├── directory.py         paths, with environment overrides
     ├── logging_utils.py     run logging
-    ├── status.py            results/status.csv and the target-slug rule
+    ├── status.py            results/apphot/status.csv and the target-slug rule
     ├── fitsio.py            cutout FITS + Parquet index reading
     ├── wcsutil.py           WCS from a header, or rebuilt from an index row
     ├── masking.py           bad pixels: flags, NaN science, bad variance
@@ -38,9 +42,9 @@ spherex-apphot/
     └── plotting.py          figures — imported by notebooks only
 ```
 
-`notebooks/main.ipynb` walks the whole pipeline end to end and validates it.
-It calls the *same* `pipeline.run_target` that `main.py` runs in batch, so the
-notebook and the production path cannot drift apart.
+`notebooks/apphot/main.ipynb` walks the whole pipeline end to end and validates it.
+It calls the *same* `pipeline.run_target` that `scripts/apphot/main.py` runs in batch,
+so the notebook and the production path cannot drift apart.
 
 ---
 
@@ -48,41 +52,43 @@ notebook and the production path cannot drift apart.
 
 ```bash
 # one-off, ~5 min, ~8 GB: makes every later Gaia query ~100x faster
-python spherex-apphot/build_gaia_cache.py
+python scripts/apphot/build_gaia_cache.py
 
 # one-off per working list: copy just those targets out of the 139k-file
 # archive into comets_v5_fits_filtered/<target>/  (exFAT scans that flat
 # directory linearly, which is why this is worth doing once)
-python spherex-apphot/extract_targets.py --target-list doc/sx_comet_list_ver2607.xlsx
+python scripts/apphot/extract_targets.py --target-list data/reference/sx_comet_list_ver2607.xlsx
 
 # one target
-python spherex-apphot/main.py --objdesig 24P
+python scripts/apphot/main.py --objdesig 24P
 
-# the whole working list, four at a time, resuming from results/status.csv
-python spherex-apphot/main.py --target-list doc/sx_comet_list_ver2607.xlsx --workers 4
+# the whole working list, four at a time, resuming from results/apphot/status.csv
+python scripts/apphot/main.py --target-list data/reference/sx_comet_list_ver2607.xlsx --workers 4
 
 # end-to-end check against the sample data in the repository
-python spherex-apphot/main.py --sample --objdesig 2P 24P --stack
+python scripts/apphot/main.py --sample --objdesig 2P 24P --stack
 
 # figures for targets already processed (main.py itself never plots)
-python spherex-apphot/make_figures.py --target-list doc/sx_comet_list_ver2607.xlsx --workers 6
+python scripts/apphot/make_figures.py --target-list data/reference/sx_comet_list_ver2607.xlsx --workers 6
 
 # tests
-python spherex-apphot/tests/test_pipeline.py
+python -m pytest tests/test_apphot_pipeline.py -q      # or: python tests/test_apphot_pipeline.py
 ```
 
-There is nothing to install; the notebook adds `spherex-apphot/` to `sys.path`.
+Run everything from the project root (`spherex-comet/`).  There is nothing to
+install: the drivers and the notebook put the project root on `sys.path`
+(`pip install -e .` once does the same for every shell).
 
 ## Outputs
 
 | path | contents |
 |---|---|
-| `results/apphot/<slug>.csv` | one row per (exposure × aperture) |
-| `results/apphot/<slug>.meta.json` | the full config, counters and epoch table that produced it |
-| `results/status.csv` | one row per target: status, counts, timing, config hash |
-| `results/logs/apphot_<utc>.log` | full run log |
-| `results/combined/<slug>_epoch<N>_<band>.fits` | band stacks (`--stack`) |
-| `fig/<slug>/` | per-target figures; `fig/<slug>/cutouts/` two per exposure |
+| `results/apphot/photometry/<slug>.csv` | one row per (exposure × aperture) |
+| `results/apphot/photometry/<slug>.meta.json` | the full config, counters and epoch table that produced it |
+| `results/apphot/status.csv` | one row per target: status, counts, timing, config hash |
+| `results/apphot/logs/apphot_<utc>.log` | full run log |
+| `results/apphot/stacks/<slug>_epoch<N>_<band>.fits` | band stacks (`--stack`) |
+| `fig/apphot/<slug>/` | per-target figures; `fig/apphot/<slug>/cutouts/` two per exposure |
 
 `<slug>` is the designation with spaces removed (`2021 G2` → `2021G2`), defined
 once in `status.slugify` and used by both the writer and the resume check.
@@ -90,7 +96,7 @@ once in `status.slugify` and used by both the writer and the resume check.
 Read a result with `sourceflag` kept as text:
 
 ```python
-df = pd.read_csv("results/apphot/24P.csv", dtype={"sourceflag": str})
+df = pd.read_csv("results/apphot/photometry/24P.csv", dtype={"sourceflag": str})
 ```
 
 ## Configuration
@@ -182,9 +188,9 @@ neighbours.
 All plotting lives in `plotting.py` and is called only from the notebook.
 
 ```bash
-python spherex-apphot/make_figures.py --objdesig 2P 24P              # everything
-python spherex-apphot/make_figures.py --objdesig 24P --no-cutouts    # summaries only
-python spherex-apphot/make_figures.py --target-list LIST --workers 6 # a whole list
+python scripts/apphot/make_figures.py --objdesig 2P 24P              # everything
+python scripts/apphot/make_figures.py --objdesig 24P --no-cutouts    # summaries only
+python scripts/apphot/make_figures.py --target-list LIST --workers 6 # a whole list
 ```
 
 Two figures per exposure is a lot at survey scale — the 68-comet working list is

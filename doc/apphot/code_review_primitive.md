@@ -1,5 +1,11 @@
 # Code Review — Primitive SPHEREx Comet Aperture Photometry (`spherex-apphot/`)
 
+> **Provenance note (2026-09-15).** This review describes the single-file prototype as it
+> stood on 2026-09-05; every path below refers to that layout.  The prototype is kept, for
+> these line references only, in `_archive/legacy/apphot/` (`apphot.py`, `apphot_all.py`, the
+> three prototype notebooks with outputs stripped).  Its replacement is the `spherex_apphot`
+> package; the disposition of every item below is `pipeline_upgrade_notes.md` beside this file.
+
 **Reviewed:** 2026-09-05 · **Status:** read-only review, nothing executed or modified.
 
 **Files reviewed**

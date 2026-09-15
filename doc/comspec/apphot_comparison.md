@@ -1,10 +1,10 @@
 # Previous versus revised aperture photometry near the gas-emission windows
 
-**Date:** 2026-09-09 · **Inputs:** `data/apphot/` (previous, 68 targets) and
-`data/apphot_revised/` (revised, `spherex_apphot` config `5502194856bc`) ·
-**Scripts:** `notebooks/apphot_comparison.py` (matching and the four continuum
+**Date:** 2026-09-09 · **Inputs:** `results/apphot/photometry/` (previous, 68 targets) and
+`results/apphot/photometry/` (revised, `spherex_apphot` config `5502194856bc`) ·
+**Scripts:** `notebooks/comspec/apphot_comparison.py` (matching and the four continuum
 runs), `apphot_comparison_summary.py` (tables), `apphot_comparison_figures.py` ·
-**Products:** `results/apphot_comparison/`, `fig/apphot_comparison/`.
+**Products:** `results/comspec/apphot_comparison/`, `fig/comspec/apphot_comparison/`.
 
 Every one of the 27 797 exposures exists in both sets with identical wavelengths
 and identical aperture centres (neither pipeline re-centres), so rows are matched
@@ -156,7 +156,7 @@ star-masked class in 491P, 2023 C2, 2024 J3, 2025 A6 and 229P (60–75 %).
 
 The photometry was regenerated with the sky annulus at 150 000 km (floored at 15 px,
 capped at 40 px; `spherex_apphot` config `9fcc7ea3871a`).  Running the 2026-09-12
-pipeline on both sets (`results/studies/annulus_previous/` holds the run on the archived
+pipeline on both sets (`results/comspec/studies/annulus_previous/` holds the run on the archived
 `5502194856bc` photometry) and pairing the 133 groups whose aperture did not change gives
 Q ratios of 1.000 (CO₂, CO) and 1.001 (H₂O): the ring moves only for comets inside
 ~1.6 au, and there the four groups inside 1 au gain 4 % in Q(H₂O).  At the channel

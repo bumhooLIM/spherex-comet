@@ -15,7 +15,7 @@ kept only where `PSF_FWHM < r_ap < 60″`.
 | frames on disk | **8,730** |
 | download completeness | **8,734 / 8,845 = 98.75%** |
 | corrupt files | **0** |
-| cutout PNGs (`fig/photometry/<T>/cutout/`) | 7,783 |
+| cutout PNGs (`fig/ztf/photometry/<T>/cutout/`) | 7,783 |
 | measurement rows | 41,533 |
 | clean rows | 51.2% (after the single-frame anomaly flag: 311 rows) |
 
@@ -116,7 +116,7 @@ expected for steady-state dust outflow.
 | 2025L1 | 18 | −0.22 | −4.27 | 8,805 |
 
 The steep end is dominated by faint, distant targets, where the resolution
-study (`doc/profile_resolution_24P.md`) showed sky subtraction — not a compact
+study (`doc/ztf/profile_resolution_24P.md`) showed sky subtraction — not a compact
 coma — is the controlling bias.  Slopes near or below −2.5 should be read as
 upper limits on steepness, not as measurements of coma structure.
 

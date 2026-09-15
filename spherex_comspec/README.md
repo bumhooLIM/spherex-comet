@@ -1,7 +1,7 @@
-# `spherex-comspec` — gas production rates from SPHEREx comet spectrophotometry
+# `spherex_comspec` — gas production rates from SPHEREx comet spectrophotometry
 
 An end-to-end model from the revised aperture photometry of the SPHEREx comet
-catalog (`data/apphot/`, produced by `spherex_apphot`) to production
+catalog (`results/apphot/photometry/`, produced by `spherex_apphot`) to production
 rates of H₂O, CO₂ and CO per comet and observing phase.  It reconstructs, as a
 single package, what the project notebooks `phase_group_update.ipynb`,
 `continuum_subtraction.ipynb` and `gas_emission_fit.ipynb` (with `emission-fitter/`)
@@ -12,25 +12,30 @@ of the **Gaia source flags** on contamination.
 The scientific method is unchanged: the AKARI/IRC band-fluorescence technique
 of Ootsubo et al. (2012) on a Haser coma with the Yamamoto (1981) aperture
 filling factor, solved as one **joint linear least-squares** fit across the
-2.7 / 4.3 / 4.7 µm bands.  [`doc/model_concept.md`](doc/model_concept.md) and
-[`doc/fitting_methodology.md`](doc/fitting_methodology.md) describe the physics
+2.7 / 4.3 / 4.7 µm bands.  [`doc/comspec/model_concept.md`](doc/comspec/model_concept.md) and
+[`doc/comspec/fitting_methodology.md`](doc/comspec/fitting_methodology.md) describe the physics
 and the formalism; this file describes how to run the tool and how to read what
-it writes.  [`doc/spherex_comspec_reconstruction.md`](doc/spherex_comspec_reconstruction.md)
+it writes.  [`doc/comspec/pipeline_decisions.md`](../doc/comspec/pipeline_decisions.md)
 records what changed in the reconstruction, what the distance-correction and
-source-flag studies found, and which placeholders to update first.
+source-flag studies found, which alternatives were tried, and which placeholders
+to update first.
 
-The package expects to live inside the `spherex-comet-catalog` project tree
-(`data/apphot/` two levels up); set `COMSPEC_ROOT` / `COMSPEC_APPHOT_DIR`
-to run it anywhere else.
+The package is the third stage of the `spherex-comet` project (`ztfcomet` →
+`spherex_apphot` → `spherex_comspec`) and expects to live at the project root, one
+level above `results/apphot/photometry/`; set `COMSPEC_ROOT` / `COMSPEC_APPHOT_DIR`
+(and `COMSPEC_DATA_DIR`, `COMSPEC_RESULT_DIR`, `COMSPEC_FIG_DIR`) to run it anywhere else.
 
 ---
 
 ## Layout
 
 ```
-spherex-comspec/
-├── main.py                    end-to-end driver: group | run | analyze | figures | all
-├── tests/test_comspec.py      unit + reproduction tests (no pytest needed)
+spherex-comet/
+├── scripts/comspec/main.py    end-to-end driver: group | run | analyze | figures | all
+├── scripts/comspec/           attach_afrho_ztf.py, phase_images.py, make_figure_slides.py
+├── notebooks/comspec/         study scripts (method_matrix.py, apphot_comparison*.py, the
+│                              literature-table builders, fluorescence_gfm/)
+├── tests/test_comspec.py      unit + reproduction tests
 └── spherex_comspec/
     ├── config.py              every constant, window, threshold; the four dataclasses;
     │                          the PLACEHOLDERS registry; the DEFAULT_VARIANTS
@@ -44,30 +49,30 @@ spherex-comspec/
     ├── fitting.py             design matrix, weighted solve, limits, coverage (Layer 6)
     ├── pipeline.py            orchestration: run_grouping, run_variant
     ├── analysis.py            flag-contamination and distance-correction studies
-    └── plotting.py            every figure -- imported only by `main.py figures`
+    └── plotting.py            every figure -- imported only by `scripts/comspec/main.py figures`
 ```
 
-Nothing is installed; `main.py` and the tests put the package on `sys.path`.
+The driver and the tests put the project root on `sys.path` (or `pip install -e .` once).
 Requires the `spherex` conda environment (numpy, pandas, astropy, scipy, matplotlib) and the
-reconstructed fluorescence database in `../data/fluorescence/` (profiles and `co_swings.csv`,
-built by `../notebooks/fluorescence_gfm/build_fluorescence_db.py`; see
-`../doc/fluorescence_database.md`).
+reconstructed fluorescence database in `data/fluorescence/` (profiles and `co_swings.csv`,
+built by `notebooks/comspec/fluorescence_gfm/build_fluorescence_db.py`; see
+`doc/comspec/fluorescence_database.md`).
 
 ## Running
 
 ```bash
-cd spherex-comspec
-python main.py all                       # everything: group, ten variants, analysis, figures
-python main.py group                     # (1) regroup the epochs, once
-python main.py run --variants dc_main    # (2) continuum + fit for one variant
-python main.py analyze                   # (3) cross-variant tables
-python main.py figures --variants dc_main # (4) figures for one variant
-python main.py run --variants dc_main --targets 24P 2P   # a quick look
-python tests/test_comspec.py             # 22 tests
+cd spherex-comet                                             # the project root
+python scripts/comspec/main.py all                           # everything: group, ten variants, analysis, figures
+python scripts/comspec/main.py group                         # (1) regroup the epochs, once
+python scripts/comspec/main.py run --variants dc_main        # (2) continuum + fit for one variant
+python scripts/comspec/main.py analyze                       # (3) cross-variant tables
+python scripts/comspec/main.py figures --variants dc_main    # (4) figures for one variant
+python scripts/comspec/main.py run --variants dc_main --targets 24P 2P   # a quick look
+python -m pytest tests/test_comspec.py -q                    # 23 tests
 ```
 
-`group` writes `data/phase_assignment.csv` (one row per exposure) and
-`results/phase_map.csv` (one row per group) and is shared by every
+`group` writes `data/comspec/phase_assignment.csv` (one row per exposure) and
+`results/comspec/phase_map.csv` (one row per group) and is shared by every
 variant.  **The photometry tables are never modified.**
 
 ## The pipeline
@@ -99,7 +104,7 @@ refuses only apertures below the PSF FWHM (0.86–1.08 px), so the rule aperture
 every exposure except beyond ~9 au (2014 UN271: 60 000 km is 0.9 px, coverage 50 %).
 Over the 193 phases: 99 / 73 / 21 at 20 000 / 40 000 / 60 000 km; 22 comets use two
 apertures across their phases, and the emission files are written per (target, aperture).
-`results/apertures.csv` records the radius, the reason (`near`, `far`, `far->enlarged`),
+`results/comspec/apertures.csv` records the radius, the reason (`near`, `far`, `far->enlarged`),
 the coverage and the phase geometry.  The S/N-driven per-target rule of 2026-09-12 is
 `rule="snr"` (variant `dc_ap_snr`), the r_h rule before it `rule="rh"` (`dc_rules_previous`);
 `aperture_for` applies any rule to a whole target for the notebooks.
@@ -166,7 +171,7 @@ The hot bands carry ~3 % of the water emission (4.63 µm 6.6 × 10⁻⁶, 4.85 �
 placeholder 10 applied): the formal error under-reports the annulus scatter.
 **Revisions of 2026-09-12 and 2026-09-14** (with the regenerated photometry, whose sky
 annulus sits at 150 000 km instead of a fixed 15–20 px; the 2026-09-14 rows were decided by
-the method matrix of `notebooks/method_matrix.py`, `doc/pipeline_decisions.md` §7.9):
+the method matrix of `notebooks/comspec/method_matrix.py`, `doc/comspec/pipeline_decisions.md` §7.9):
 
 | what | now | before |
 |---|---|---|
@@ -221,7 +226,7 @@ the groups detected in both spaces; 0.48 for the 2026-09-08 baseline).
 | `dc_ap_snr` | rules | baseline | distance-corrected | the S/N-driven per-target aperture of 2026-09-12 against the fixed per-phase rule |
 | `dc_rules_previous` | rules | baseline | distance-corrected | the 2026-09-11 rules a variant can carry (r_h aperture rule per target, fixed 3/2/2 orders, no window extension, 1σ cut and tier, diagonal errors, no hot-band cap); the windows are shared |
 
-Each variant is a complete, independent run under `data/emission/`, `results/` and `fig/` for the main variant and under
+Each variant is a complete, independent run under `data/comspec/emission/`, `results/comspec/` and `fig/comspec/` for the main variant and under
 `studies/<variant>/` for every other one.  A variant's `hash`
 (written to `run.meta.json`) identifies its full parameter set.  `config.VARIANTS`
 maps each name to its `Variant`, so a script drives one directly:
@@ -233,18 +238,18 @@ The driver picks each study's partners by `Variant.role` (`main`, `flags`, `dist
 
 | path | content |
 |---|---|
-| `data/phase_assignment.csv` | `target, filename, obsid, jd_utc, epoch, arc, phase, manual` per exposure |
-| `results/phase_map.csv` | one row per phase group: r_h / r_obs / timing / band-sampling statistics |
-| `data/emission/<target>_<ap>km.csv` | per-band continuum summary (verdict, provenance, coefficients + covariance) |
-| `data/emission/<target>_<ap>km_points.csv` | point-level spectrum: `flux`/`err` in the fit space, `emis_*` and `emis_raw_*`, `role`, flags |
-| `results/gas_fit.csv` | **one row per (target, phase): Q, errors, limits, coverage, n_eff, mixing ratios, caveats** |
-| `results/gas_fit_lines/` | dense model curves and per-channel residuals per fit |
-| `results/continuum_summary.csv`, `skipped_groups.csv`, `not_fitted.csv`, `apertures.csv` (one row per target and phase: radius, reason, coverage, phase geometry), `run.meta.json` | provenance |
-| `data/studies/<v>/`, `results/studies/<v>/`, `fig/studies/<v>/` | the same products for every study variant |
-| `results/studies/flag_policy_*.csv`, `distcorr_effect_*.csv`; `fig/studies/*.png` | the cross-variant studies |
-| `results/studies/method_matrix/matrix.csv` | the continuum/fit method matrix of 2026-09-14 (`notebooks/method_matrix.py`) |
-| `results/placeholders.csv` | the placeholder registry as a table |
-| `results/afrho_ztf.csv` | *optional* -- the ZTF dust context per (target, phase), written by `../scripts/attach_afrho_ztf.py` from the `ztf-comet` project; when present, `dataio.attach_afrho_ztf` appends its summary columns to every `gas_fit.csv` and to `phase_map.csv` |
+| `data/comspec/phase_assignment.csv` | `target, filename, obsid, jd_utc, epoch, arc, phase, manual` per exposure |
+| `results/comspec/phase_map.csv` | one row per phase group: r_h / r_obs / timing / band-sampling statistics |
+| `data/comspec/emission/<target>_<ap>km.csv` | per-band continuum summary (verdict, provenance, coefficients + covariance) |
+| `data/comspec/emission/<target>_<ap>km_points.csv` | point-level spectrum: `flux`/`err` in the fit space, `emis_*` and `emis_raw_*`, `role`, flags |
+| `results/comspec/gas_fit.csv` | **one row per (target, phase): Q, errors, limits, coverage, n_eff, mixing ratios, caveats** |
+| `results/comspec/gas_fit_lines/` | dense model curves and per-channel residuals per fit |
+| `results/comspec/continuum_summary.csv`, `skipped_groups.csv`, `not_fitted.csv`, `apertures.csv` (one row per target and phase: radius, reason, coverage, phase geometry), `run.meta.json` | provenance |
+| `data/comspec/studies/<v>/`, `results/comspec/studies/<v>/`, `fig/comspec/studies/<v>/` | the same products for every study variant |
+| `results/comspec/studies/flag_policy_*.csv`, `distcorr_effect_*.csv`; `fig/comspec/studies/*.png` | the cross-variant studies |
+| `results/comspec/studies/method_matrix/matrix.csv` | the continuum/fit method matrix of 2026-09-14 (`notebooks/comspec/method_matrix.py`) |
+| `results/comspec/placeholders.csv` | the placeholder registry as a table |
+| `results/comspec/afrho_ztf.csv` | *optional* -- the ZTF dust context per (target, phase), written by `../scripts/attach_afrho_ztf.py` from the `ztfcomet` (the ZTF stage) project; when present, `dataio.attach_afrho_ztf` appends its summary columns to every `gas_fit.csv` and to `phase_map.csv` |
 
 `phase` in every file is the regrouped phase; `epoch` is its 28-day parent.
 Pin `dtype={"target": str}` when reading: `2022E2` and `2024E1` are valid
@@ -266,7 +271,7 @@ scientific notation.
 | `v_hel_mean_kms`, `swings_CO` | mean heliocentric radial velocity of the fitted channels (positive receding) and the mean CO Swings factor g(v_h)/g(0) applied |
 | `n_flag_a`, `n_flag_b` | flagged channels that entered the fit |
 | `caveats` | the interpretive warnings, joined by `;` |
-| `afrho_rh_au`, `afrho_10k_cm`, `afrho_10k_err_cm`, `afrho_10k_method`, `afrho_20k_*`, `afrho_note` | *present only with `results/afrho_ztf.csv`*: ZTF r-band A(0°)fρ (cm, 1σ) at the phase's mean r_h for ρ = 10 000 / 20 000 km and how it was obtained -- `direct` (ZTF frames inside the SPHEREx window), `trend` (the fitted heliocentric law of that orbital phase), `trend_extrap` (the law extended ≤ 0.1 dex), `none` (`afrho_note` says why); a row whose phase geometry moved since the table was built reads `stale` |
+| `afrho_rh_au`, `afrho_10k_cm`, `afrho_10k_err_cm`, `afrho_10k_method`, `afrho_20k_*`, `afrho_note` | *present only with `results/comspec/afrho_ztf.csv`*: ZTF r-band A(0°)fρ (cm, 1σ) at the phase's mean r_h for ρ = 10 000 / 20 000 km and how it was obtained -- `direct` (ZTF frames inside the SPHEREx window), `trend` (the fitted heliocentric law of that orbital phase), `trend_extrap` (the law extended ≤ 0.1 dex), `none` (`afrho_note` says why); a row whose phase geometry moved since the table was built reads `stale` |
 
 ## Placeholders
 
@@ -278,13 +283,13 @@ the expansion-velocity law, the 2.7 µm blue edge, the
 the polynomial orders, the 1σ detection
 tier, the negative-channel cut, the error column, the grouping thresholds, the
 sufficiency gates, the opacity calibration, T_rot and the upstream flag
-thresholds.  `results/placeholders.csv` is the same table; the
+thresholds.  `results/comspec/placeholders.csv` is the same table; the
 reconstruction document says which ones must be updated first.
 
 ## Tests
 
 ```bash
-python tests/test_comspec.py
+python -m pytest tests/test_comspec.py -q
 ```
 
 Filling-factor limits and linearity in Q; the grouping DP on synthetic

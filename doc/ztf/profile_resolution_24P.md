@@ -1,7 +1,7 @@
 # Why does 24P's coma profile look steeper inbound? — a resolution study
 
 **Date:** 2026-09-08  **Data:** 24P/Schaumasse, 295 ZTF frames (240 clean), 2025-03 → 2026-09
-**Code:** `ztfcomet.profile`, `notebooks/profile_resolution.py`
+**Code:** `ztfcomet.profile`, `scripts/ztf/profile_resolution.py`
 **Figures:** `fig/24P/profile_resolution_24P.png`, `profile_validity_24P.png`, `profile_correction_24P.png`
 **Tables:** `results/24P/profile_resolution_24P.csv`, `results/profile_feasibility_survey.csv`
 

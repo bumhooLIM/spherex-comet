@@ -2,7 +2,7 @@
 
 _Layer-by-layer account of the fitter, written 2026-09-02 against `emission-fitter/` v0.1.0 and
 unchanged in substance since: the same code now lives in
-`spherex-comspec/spherex_comspec/{config,gasmodel,instrument,fitting,dataio}.py`.  Every equation
+`spherex_comspec/{config,gasmodel,instrument,fitting,dataio}.py`.  Every equation
 below was checked against the source and, where numerically checkable, against a re-derivation
 run on the package — see §9.  Two rules added on 2026-09-09 are documented in
 `pipeline_decisions.md`: the 4.6–4.9 µm hot-band fallback for Q(H₂O) when the 2.7 µm band is not
@@ -45,8 +45,8 @@ The design is a strict pipeline; each layer is a separate, individually testable
 | 5 | `instrument` | SPHEREx channel bandpass | $W_{ij}$ |
 | 6 | `fitting` | design matrix, WLS solve, errors, limits | $A_{iX}$, $\hat{Q}$, $C$ |
 
-`dataio` sits outside the physics: it assembles the fit input from `data/emission/` and persists
-`results/`.
+`dataio` sits outside the physics: it assembles the fit input from `data/comspec/emission/` and persists
+`results/comspec/`.
 
 ---
 
@@ -158,7 +158,7 @@ velocity $v_h$ (Swings effect):
 $$g_b(r_h, v_h) \;=\; \frac{g_b(1\,\mathrm{au})\, s_b(v_h)}{r_h^{2}} \qquad [\mathrm{photons\;s^{-1}\;molecule^{-1}}]$$
 
 **Since 2026-09-11 (`ModelParams.profile_source = "gfm"`)** the $g$-factors and band shapes come from
-the reconstructed GSFC-style fluorescence database (`data/fluorescence`, `doc/fluorescence_database.md`;
+the reconstructed GSFC-style fluorescence database (`data/fluorescence`, `doc/comspec/fluorescence_database.md`;
 served by `fluorescence.py`): every band a species emits between 0.7 and 5.0 µm at $T_{\rm rot}$,
 computed line by line with the General Fluorescence Model of Villanueva et al. from HITRAN 2020 and a
 Kurucz-continuum × Fraunhofer-line solar spectrum, and validated to ~10 % against the published GSFC
@@ -577,7 +577,7 @@ From `config.PLACEHOLDERS` and the handoff, in priority order:
    to have the right *width*, not the right wings.
 2. **Band profiles and g-factors** — *applied 2026-09-11*: the reconstructed fluorescence database
    supplies both; what remains is the HITRAN hot-band completeness of the reconstruction
-   (`doc/fluorescence_database.md` §5) and a per-comet $T_{\rm rot}$.
+   (`doc/comspec/fluorescence_database.md` §5) and a per-comet $T_{\rm rot}$.
 3. `RHO_TAU_REF_KM` and `KAPPA_PUMP` — needed only to map the opacity systematic, not to fit.
 4. The $v_g$ law's provenance (§3.1).
 

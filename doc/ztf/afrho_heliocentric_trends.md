@@ -1,15 +1,15 @@
 # Heliocentric dependence of Afρ across the survey
 
-Driver `notebooks/afrho_trends.py`; science in `ztfcomet/activity.py`.  Tables
-in `results/afrho/` (`trends.csv`, `peaks.csv`, `breaks.csv`, `colour.csv`,
+Driver `scripts/ztf/afrho_trends.py`; science in `ztfcomet/activity.py`.  Tables
+in `results/ztf/afrho/` (`trends.csv`, `peaks.csv`, `breaks.csv`, `colour.csv`,
 `outbursts.csv`, `spherex_windows.csv`, `spherex_afrho.csv`); figures
-`fig/afrho/trend/<comet>.png` (fits, peak, breaks, outbursts, colour, SPHEREx
-windows, and in red the Afρ at each SPHEREx phase), `fig/afrho/trend_slide/`
-(one figure per SPHEREx phase for the catalog's review deck), `fig/afrho/rh/`,
-`fig/afrho/apertures/` and `fig/afrho/survey_overview.png`.  56 comets;
+`fig/ztf/afrho/trend/<comet>.png` (fits, peak, breaks, outbursts, colour, SPHEREx
+windows, and in red the Afρ at each SPHEREx phase), `fig/ztf/afrho/trend_slide/`
+(one figure per SPHEREx phase for the catalog's review deck), `fig/ztf/afrho/rh/`,
+`fig/ztf/afrho/apertures/` and `fig/ztf/afrho/survey_overview.png`.  56 comets;
 r-band is the main series and g is analysed separately; ρ = 10,000 and
 20,000 km.  The aperture question raised by C/2024 E1 is answered in
-`doc/afrho_aperture_systematics.md`.
+`doc/ztf/afrho_aperture_systematics.md`.
 
 ## Method
 
@@ -58,7 +58,7 @@ r-band is the main series and g is analysed separately; ρ = 10,000 and
   panel (S1, S2, …): 165 windows over 56 comets (the catalog grouping of
   2026-09-14; `spherex_windows.py` is rebuilt by every full run).
 - **Afρ at the SPHEREx epochs** (`activity.afrho_at_epoch`,
-  `results/afrho/spherex_afrho.csv`, the red markers and the table strip of
+  `results/ztf/afrho/spherex_afrho.csv`, the red markers and the table strip of
   the trend figures): for each SPHEREx phase, at the mean r_h of the channels
   that carried its production rate (the exposure mean where no rate was
   fitted), r-band, both apertures.  Three estimates in order of what they
@@ -83,7 +83,7 @@ r-band is the main series and g is analysed separately; ρ = 10,000 and
 
 ## Reading the results
 
-The generated section below is rebuilt by `notebooks/afrho_trends_report.py`
+The generated section below is rebuilt by `scripts/ztf/afrho_trends_report.py`
 after every run of `afrho_trends.py`.  What it shows, in brief:
 
 - **Only four comets have both a rising and a fading phase with enough

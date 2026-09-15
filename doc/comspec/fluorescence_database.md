@@ -5,8 +5,8 @@ SPHEREx coma emission model. Sources: the five papers in `doc/literature/fluores
 (Villanueva et al. 2011 Icarus, 2011 JGR, 2012 JQSRT, 2012 ApJ, 2013 JQSRT; summaries next to the
 PDFs) and the PSG description of the GSFC Fluorescence Database (Villanueva et al. 2018, JQSRT 217,
 86: 17 species, 530 281 non-LTE lines below 10 µm, derived from 2 billion ab initio/empirical lines).
-Products: `data/fluorescence/` (formats in its README); code: `notebooks/fluorescence_gfm/`;
-figure: `fig/fluorescence_profiles.png`.
+Products: `data/fluorescence/` (formats in its README); code: `notebooks/comspec/fluorescence_gfm/`;
+figure: `fig/comspec/fluorescence_profiles.png`.
 
 ## 1. Scientific concepts
 
@@ -19,7 +19,7 @@ ground state is *resonant* fluorescence; decay through intermediate vibrational 
 4.85 µm, the L-band 2ν1−ν3 / ν1+ν3−ν1 / … bands at 2.8–3.0 µm). The emission rate per molecule of a
 line or band is its **fluorescence efficiency** g [photons s⁻¹ molecule⁻¹], quoted at 1 au and
 scaled by R_h⁻². The observed band flux is F = N_ap · g · hc/λ / (4πΔ²) with N_ap the number of
-molecules in the aperture (`doc/model_concept.md`).
+molecules in the aperture (`doc/comspec/model_concept.md`).
 
 **The pump.** For a line l→u the absorption rate per molecule in level l is
 (g_u/g_l) A_ul c² F_ν(ν) / (8π h ν³) — the Einstein-B form of Villanueva et al. (2011) Eqs. C3–C7 —
@@ -141,7 +141,7 @@ for 1 586 lines, as the 2013 paper notes); use NH3 with that caveat.
 | OCS ν3 4.85 µm | 2.8 × 10⁻³ | | sits on the H2O ν1−ν2 / CO blend |
 | H2S 2.65 µm | 1 × 10⁻⁵ | | negligible |
 
-Use in the pipeline (wired in on 2026-09-11, `spherex-comspec/spherex_comspec/fluorescence.py`):
+Use in the pipeline (wired in on 2026-09-11, `spherex_comspec/fluorescence.py`):
 the species templates of the fit are the `profiles/` spectral densities at T_rot, and g(CO) is scaled
 with the heliocentric velocity of every channel through `co_swings.csv` (0.25 km/s grid, ±60 km/s,
 30/70/130 K). Relative to the previous eight-band model the H2O ν3 and 2.7 µm hot-band strengths

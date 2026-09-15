@@ -8,12 +8,12 @@ from the 24P study was where 24P's data ran out, not where the law did.  The
 steep naive slopes are an S/N effect, not a physical-window effect, and the
 corrected slope converges on m = 1.00 as S/N rises.
 
-Driver: `notebooks/profile_survey.py`.  Tables: `results/profile_survey_*.csv`.
-Figures: `fig/survey/profile_survey_slope.png`, `profile_survey_ratio.png`.
+Driver: `scripts/ztf/profile_survey.py`.  Tables: `results/profile_survey_*.csv`.
+Figures: `fig/ztf/survey/profile_survey_slope.png`, `profile_survey_ratio.png`.
 
 ## Question
 
-The 24P resolution study (`doc/profile_resolution_24P.md`) showed ρ·SB flat to
+The 24P resolution study (`doc/ztf/profile_resolution_24P.md`) showed ρ·SB flat to
 ~12,100 km post-perihelion and set ρ_max ≥ 12,000 km.  But 10 px at Δ ≈ 0.8 au
 *is* ~12,000 km: that limit was coverage.  The survey's distant targets push
 10 px to 30–45,000 km, and ~1,150 clean frames do so with outer-annulus

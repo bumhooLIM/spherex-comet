@@ -1,11 +1,11 @@
 # Pipeline upgrade notes
 
-**Date:** 2026-09-07 · **Package:** `spherex_apphot` 2.2.0 · **Supersedes:** `spherex-apphot/legacy/apphot.py`
+**Date:** 2026-09-07 · **Package:** `spherex_apphot` 2.2.0 · **Supersedes:** `_archive/legacy/apphot/apphot.py`
 
 This is the disposition record for every item in
 [`code_review_primitive.md`](code_review_primitive.md), plus the decisions taken
 where the project overruled the review.  Read it alongside
-[`../spherex-apphot/README.md`](../spherex-apphot/README.md).
+[`../spherex_apphot/README.md`](../spherex_apphot/README.md).
 
 ---
 
@@ -15,11 +15,11 @@ The 975-line single file became a package with one responsibility per module
 (layout in the README).  Three consequences worth naming:
 
 * **`main.py` produces photometry and nothing else.**  No figure is drawn on the
-  batch path; `plotting.py` is imported only by `notebooks/main.ipynb`.  Keeping
+  batch path; `plotting.py` is imported only by `notebooks/apphot/main.ipynb`.  Keeping
   the drawing code in a module rather than pasted into the notebook means the
   figures are version-controlled and reviewable, while the notebook stays a
   narrative that calls them.
-* **The notebook runs the production code.**  `notebooks/main.ipynb` calls the
+* **The notebook runs the production code.**  `notebooks/apphot/main.ipynb` calls the
   same `pipeline.run_target`.  The prototype's notebook and script were separate
   copies of the same logic and had already diverged.
 * **Provenance is written, not remembered.**  Every result carries a
@@ -28,14 +28,14 @@ The 975-line single file became a package with one responsibility per module
 
 ## 2. Status logging
 
-`results/status.csv` holds one row per target — status, timing, exposure and row
+`results/apphot/status.csv` holds one row per target — status, timing, exposure and row
 counts, missing/unreadable files, apertures skipped, `badphot` count, Gaia count,
 config hash, output path, error message.  Written atomically (temp file +
 `os.replace`), keyed on the slug so a re-run replaces rather than appends, and
 marked `running` *before* the work starts so an interrupted run is visible as
 such.  `main.py --all` consults it to resume.
 
-Full logs go to `results/logs/apphot_<utc>.log`.
+Full logs go to `results/apphot/logs/apphot_<utc>.log`.
 
 ---
 
@@ -226,7 +226,7 @@ Reading them:
 
 ## 5. Validation performed
 
-`notebooks/main.ipynb` runs against `data-sample/` and checks, with output:
+`notebooks/apphot/main.ipynb` runs against `data/spherex_sample/` and checks, with output:
 
 | check | result |
 |---|---|
@@ -250,7 +250,7 @@ Both sample targets complete with `status = ok`; nine band stacks written for 24
 
 ## 7. Production run — the 68-comet working list
 
-`doc/sx_comet_list_ver2607.xlsx` lists 69 designation cells; one of them is the
+`data/reference/sx_comet_list_ver2607.xlsx` lists 69 designation cells; one of them is the
 sheet's `Total` row, whose `desig` cell holds `68` (the *count*).
 `targetlist.read_target_list` drops summary rows for exactly that reason, so the
 run covers **68 comets**, all present in the index.
@@ -335,7 +335,7 @@ interrupted render resumes in seconds rather than redoing hours of work.
 A single comet answers "did the flags work here"; 67 targets answer whether the
 definitions generalise.  `diagnostics.survey_flag_effectiveness` scores every
 target against the growth-curve contamination test
-(`results/flag_effectiveness_survey.csv`, `fig/flag_effectiveness_survey.png`):
+(`results/apphot/flag_effectiveness_survey.csv`, `fig/apphot/flag_effectiveness_survey.png`):
 
 | | median recall | median lift | median data kept |
 |---|---|---|---|

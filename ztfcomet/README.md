@@ -1,13 +1,15 @@
-# ztfcomet
+# `ztfcomet` — ZTF dust photometry, coma profiles and Afρ trends
 
 Query and analyse comet observations from the **Zwicky Transient Facility**
 (Palomar Observatory, MPC code `I41`): cutout retrieval from IRSA, aperture
-photometry, and Afρ.
+photometry, Afρ, coma radial profiles and heliocentric activity trends — the first
+stage of the `spherex-comet` project, which supplies the dust context of every
+SPHEREx phase to the catalog.
 
-This repository merges two earlier projects — `ztf-sso-query` (cutout FITS
+The package merges two earlier projects — `ztf-sso-query` (cutout FITS
 retrieval via the IRSA API) and `ztf-comet` (Afρ photometry and figures) — into
 one package, and fixes the defects catalogued in
-[`doc/primitive_code_analysis.md`](doc/primitive_code_analysis.md).
+[`doc/ztf/primitive_code_analysis.md`](../doc/ztf/primitive_code_analysis.md).
 
 ---
 
@@ -17,14 +19,14 @@ Requires Python ≥ 3.10. Development happens in the `spherex` conda environment
 
 ```bash
 conda activate spherex
-pip install -e .
+pip install -e .        # from the project root; installs the three packages
 ```
 
 Raw FITS are **not** stored in the repository. Paths resolve in this order:
 
 1. `$ZTFCOMET_DATA` if set,
 2. the external SSD at `/Volumes/T7/data/ztf-comet` when mounted,
-3. `<project>/data` otherwise.
+3. `<project>/data/ztf` otherwise.
 
 The Gaia DR3 catalogue used for contamination flagging resolves from
 `$ZTFCOMET_GAIA`, defaulting to `~/Desktop/data/gaia_dr3`. It needs
@@ -44,13 +46,13 @@ print(directory.describe())
 Query, download, reduce and plot a target in one command:
 
 ```bash
-python notebooks/main.py 24P
+python scripts/ztf/main.py 24P
 ```
 
 Several targets, reusing data already on disk:
 
 ```bash
-python notebooks/main.py 24P 240P 2P --steps phot figures
+python scripts/ztf/main.py 24P 240P 2P --steps phot figures
 ```
 
 `--help` lists every override (date window, `rho_km`, cutout size, and so on).
@@ -74,7 +76,8 @@ zc.plot_afrho({target.name: phot}, filters=["ZTF_r"], x="rh")
 
 ```
 ztfcomet/            the package
-├── directory.py     THE path authority — nothing else builds a path
+├── directory.py     THE path authority — nothing else builds a path (results/ztf, fig/ztf, doc/ztf;
+│                    SPHEREX_ROOT = the project root, where the SPHEREx stages live)
 ├── config.py        targets, orbit records, solar magnitudes, tunables
 ├── query.py         JPL Horizons ephemerides + IRSA image search
 ├── cutout.py        URL construction + validated download
@@ -83,26 +86,29 @@ ztfcomet/            the package
 ├── horizons.py      designation -> orbit record, fragment-aware
 ├── orbit.py         perihelion elements, Kepler t(r_h) for the date axis
 ├── profile.py       radial SB profile of the comet vs field stars (1/rho test)
+├── activity.py      heliocentric Afρ trends, peaks, breaks, outbursts, colour, Afρ at the SPHEREx epochs
 ├── plotting.py      annotated cutouts, Afrho lightcurves
-└── rcparams.py      shared matplotlib style
+└── rcparams.py      matplotlib style of this stage (15 pt; the SPHEREx stages use notebooks/rcparams.py)
 
-notebooks/
+scripts/ztf/
 ├── main.py          end-to-end driver, single or multiple targets
 ├── survey.py        unattended multi-target batch, resumable
 ├── afrho_trends.py  heliocentric Afρ trends per comet, peaks, breaks, outbursts, colour;
-│                    the Afρ at every SPHEREx phase (results/afrho/, fig/afrho/trend/)
-├── afrho_trends_report.py   rebuilds the tables of doc/afrho_heliocentric_trends.md
+│                    the Afρ at every SPHEREx phase (results/ztf/afrho/, fig/ztf/afrho/trend/)
+├── afrho_trends_report.py   rebuilds the tables of doc/ztf/afrho_heliocentric_trends.md
 ├── spherex_windows.py       when SPHEREx observed each comet, per phase group
+├── profile_survey.py, profile_resolution.py, aperture_systematics.py, reflag_anomalies.py   studies
+notebooks/ztf/
 ├── query.ipynb      validate the query stage (test target 24P)
 ├── afrho.ipynb      validate the photometry stage (test target 24P)
-├── figure.ipynb     the core figures
-└── legacy/          pre-merge notebooks, outputs stripped — do not reuse
+└── figure.ipynb     the core figures
 
-doc/                 technical documents and the code review
-data/                raw FITS + eph.csv/ztf.csv      (gitignored)
-results/             photometry tables               (gitignored)
-fig/                 figures                         (gitignored)
-tests/               offline test suite
+doc/ztf/             technical notes and the code review
+data/ztf/            raw FITS + eph.csv/ztf.csv local fallback   (the SSD is the real home)
+results/ztf/         photometry/, profile/, afrho/               (gitignored)
+fig/ztf/             afrho/, photometry/, profile/               (gitignored)
+tests/               test_ztfcomet.py, test_activity.py, test_contamination.py, test_profile.py
+_archive/legacy/ztf/ pre-merge notebooks, outputs stripped — do not reuse
 ```
 
 ---
@@ -154,7 +160,7 @@ oversampled cutout so 0.5 px annuli on 1″ pixels are well sampled. Up to 20
 unsaturated, isolated field stars with S/N > 10 are profiled on the same frame
 and stacked (sigma-clipped median) as the PSF reference. A power law is fitted
 outside the core: **−1 is a steady-state coma; stars give ≈ −4.** Output:
-`results/<target>/profile_*.csv`, `fig/<target>/profile/` and a per-target
+`results/ztf/profile/<target>_profile_*.csv`, `fig/ztf/profile/<target>/` and a per-target
 summary. On 24P the clean-frame median slope is −1.07.
 
 **Afρ** — A'Hearn et al. (1984):
@@ -166,19 +172,19 @@ Solar magnitudes are PS1 AB (Willmer 2018), matching ZTF's calibration.
 
 > Afρ is aperture-dependent by construction. Always quote `rho_km` with a value.
 
-**Heliocentric trends and the SPHEREx epochs** — `notebooks/afrho_trends.py`
+**Heliocentric trends and the SPHEREx epochs** — `scripts/ztf/afrho_trends.py`
 fits `Afρ = A r_h^-x` per orbital phase, aperture and band, finds peaks,
 breaks and outbursts (`ztfcomet.activity`; the note is
-`doc/afrho_heliocentric_trends.md`), and estimates for every SPHEREx phase
+`doc/ztf/afrho_heliocentric_trends.md`), and estimates for every SPHEREx phase
 group of a comet the Afρ at the group's mean r_h
 (`activity.afrho_at_epoch`): the clean frames inside the window when ZTF
 observed then, otherwise the fitted law of the phase the epoch falls in,
 otherwise a bounded extrapolation, otherwise nothing with the reason.  The
-table is `results/afrho/spherex_afrho.csv`; the trend figures
-(`fig/afrho/trend/`) mark those values in red, and `fig/afrho/trend_slide/`
+table is `results/ztf/afrho/spherex_afrho.csv`; the trend figures
+(`fig/ztf/afrho/trend/`) mark those values in red, and `fig/ztf/afrho/trend_slide/`
 holds one compact figure per SPHEREx phase (the r_h panels and the table,
 that phase highlighted) for the catalog's review deck.  The SPHEREx catalog
-attaches the values to its summaries with its `scripts/attach_afrho_ztf.py`.
+attaches the values to its summaries with its `scripts/comspec/attach_afrho_ztf.py`.
 
 ---
 
@@ -263,7 +269,7 @@ entry here is what makes the choice reviewable.
 ## Tests
 
 ```bash
-pytest tests/ -q
+pytest tests/test_ztfcomet.py tests/test_activity.py tests/test_contamination.py tests/test_profile.py -q
 ```
 
 Offline and deterministic. The `test_regression_c*` cases pin the specific
@@ -277,5 +283,5 @@ defects from the review so they cannot return.
   print headers and shapes instead.
 - Import `ztfcomet.rcparams` for figure style rather than restating rcParams.
   `savefig.dpi` is 200 for one-off figures; use 50 for batch output.
-- `notebooks/legacy/` is kept for provenance only. Those notebooks do not run
+- `_archive/legacy/ztf/` is kept for provenance only. Those notebooks do not run
   against this package and contain the bugs the review documents.

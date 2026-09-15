@@ -1,7 +1,7 @@
 # When Afρ rises with distance: real, or an aperture effect?  (C/2024 E1)
 
-Driver `notebooks/aperture_systematics.py`; figure `fig/afrho/systematics_2024E1.png`;
-table `results/afrho/systematics_2024E1.csv`.
+Driver `scripts/ztf/aperture_systematics.py`; figure `fig/ztf/afrho/systematics_2024E1.png`;
+table `results/ztf/afrho/systematics_2024E1.csv`.
 
 ## The question
 
@@ -31,7 +31,7 @@ steeper than 1/ρ or a bias that depends on Δ.
 The ratio climbs from 1.3 to 2.1 with distance.  Read as a coma slope through
 the curve of growth (m_eff = 1 − dlog Afρ / dlog ρ across the five apertures)
 it is 1.20 at 2 au and 1.45 at 4 au.  But the PSF-modelled radial profile
-(`doc/profile_survey_1rho.md`), which fits the sky as a free parameter, gives
+(`doc/ztf/profile_survey_1rho.md`), which fits the sky as a free parameter, gives
 m = 0.83–0.92 on the same frames inside 3.3 au: a 1/ρ coma, or slightly
 shallower, within 30,000 km.  The apertures disagree with the resolved
 profile.  The difference between the two measurements is how they treat
@@ -43,7 +43,7 @@ annulus.
 1. **Coma light in the sky annulus.**  The annulus runs from 3ρ to
    4ρ + 20 px and takes the median, which for a 1/ρ coma removes
    ½ ρ/r_med of the coma flux: 7.8% at 10,000 km, 11.8% at 40,000 km
-   (`doc/afrho_background_annulus.md`).  A 4% differential, in the
+   (`doc/ztf/afrho_background_annulus.md`).  A 4% differential, in the
    direction of *lowering* the ratio.  Not this.
 2. **Aperture correction.**  A point-source correction applied to an
    extended source over-brightens the small aperture; the applied value
