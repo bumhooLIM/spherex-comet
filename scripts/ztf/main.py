@@ -9,19 +9,19 @@ Examples
 --------
 Full run for the default test target::
 
-    python notebooks/main.py 24P
+    python scripts/ztf/main.py 24P
 
 Several targets, query and photometry only::
 
-    python notebooks/main.py 24P 240P 2P --no-figures
+    python scripts/ztf/main.py 24P 240P 2P --no-figures
 
 Reduce data already on disk, skipping the network entirely::
 
-    python notebooks/main.py 240P --steps phot figures
+    python scripts/ztf/main.py 240P --steps phot figures
 
 Re-fetch over a different window with a bigger aperture::
 
-    python notebooks/main.py 2P --start 2025-07-01 --end 2026-05-31 --rho-km 20000
+    python scripts/ztf/main.py 2P --start 2025-07-01 --end 2026-05-31 --rho-km 20000
 
 Stage names for ``--steps`` are ``query``, ``download``, ``phot``, ``profile``
 and ``figures``; all five run by default. ``profile`` compares the comet's
@@ -52,7 +52,7 @@ import sys
 from pathlib import Path
 
 # Allow running straight from a checkout without installing the package.
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import matplotlib
 import pandas as pd

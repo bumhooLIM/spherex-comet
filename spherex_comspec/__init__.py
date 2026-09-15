@@ -1,7 +1,7 @@
 """
 spherex_comspec -- gas production rates from SPHEREx comet spectrophotometry.
 
-End-to-end model from the revised aperture photometry (``data/apphot_revised``)
+End-to-end model from the revised aperture photometry (``results/apphot/photometry/``)
 to production rates of H2O, CO2 and CO:
 
 ====================  =========================================================

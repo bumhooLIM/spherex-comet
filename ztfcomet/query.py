@@ -1,7 +1,7 @@
 """JPL Horizons ephemerides and IRSA ZTF image-metadata search.
 
 Ported from ``ztfssoquery.construct_fitsurl`` with four correctness fixes
-(C10-C14 of ``doc/primitive_code_analysis.md``):
+(C10-C14 of ``doc/ztf/primitive_code_analysis.md``):
 
 * The ephemeris block is now joined to the image metadata **on JD**, not by
   row position.  The old ``pd.concat(axis=1)`` was correct only because

@@ -1,10 +1,10 @@
 """
 Layer 3-4 inputs from the reconstructed fluorescence database (``data/fluorescence``).
 
-The database is built by ``notebooks/fluorescence_gfm/build_fluorescence_db.py`` with the General
+The database is built by ``notebooks/comspec/fluorescence_gfm/build_fluorescence_db.py`` with the General
 Fluorescence Model of Villanueva et al. (2011, 2012) -- HITRAN 2020 line lists pumped by a
 Kurucz-continuum x Fraunhofer-line solar spectrum, with level-by-level cascade -- and is validated
-against the published GSFC g-factors to ~10 % (``doc/fluorescence_database.md``).  It gives, per
+against the published GSFC g-factors to ~10 % (``doc/comspec/fluorescence_database.md``).  It gives, per
 species, the emission spectral density
 
     g_lambda(lambda; T_rot)   [photons s^-1 molecule^-1 um^-1]  at 1 au, v_h = 0,
@@ -41,9 +41,11 @@ from . import directory as _dir
 __all__ = ["FLUOR_DIR", "SWINGS_SPECIES", "available", "describe", "g_lambda", "swings_factor",
            "band_total", "rebin_density", "profile_temperatures"]
 
-#: the database lives with the project, not with a run's (overridable) data tree
+#: the database lives with the project (``data/fluorescence/``), not with a run's
+#: (overridable) data tree; ``COMSPEC_FLUOR_DIR`` is kept as an alias of
+#: ``COMSPEC_FLUORESCENCE_DIR`` for older shell scripts.
 FLUOR_DIR: Path = Path(os.environ["COMSPEC_FLUOR_DIR"]).expanduser() if os.environ.get("COMSPEC_FLUOR_DIR") \
-    else _dir.ROOT / "data" / "fluorescence"
+    else _dir.FLUORESCENCE_DIR
 #: species whose g-factor is scaled with heliocentric velocity
 SWINGS_SPECIES = ("CO",)
 
@@ -63,7 +65,7 @@ def _profile(species: str):
     p = FLUOR_DIR / "profiles" / f"{species}_gprofile.csv"
     if not p.is_file():
         raise FileNotFoundError(f"{p}: build the fluorescence database first "
-                                "(notebooks/fluorescence_gfm/build_fluorescence_db.py)")
+                                "(notebooks/comspec/fluorescence_gfm/build_fluorescence_db.py)")
     d = pd.read_csv(p)
     temps = sorted(int(c[7:10]) for c in d.columns if c.startswith("g_lam_T") and c.endswith("K"))
     lam = d["lam_um"].to_numpy(dtype=float)

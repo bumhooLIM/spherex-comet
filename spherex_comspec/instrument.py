@@ -1,6 +1,6 @@
 """Layer 5: the SPHEREx instrument response (ported unchanged from ``emission-fitter``).
 
-SPHEREx disperses with linear variable filters, so every measurement in ``data/apphot`` is a flux
+SPHEREx disperses with linear variable filters, so every measurement in ``results/apphot/photometry`` is a flux
 density through one filter channel rather than a monochromatic sample. The photometry table records
 that channel directly: ``wl`` is its centre and ``wlwidth`` its FWHM.
 

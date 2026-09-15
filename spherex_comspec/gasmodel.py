@@ -1,12 +1,12 @@
 """Forward model: gas production rates -> monochromatic coma emission spectrum.
 
 Ported from ``emission-fitter/gasmodel.py`` (v0.1.0); every equation was verified against a
-re-derivation in ``doc/fitting_methodology.md`` section 9.  Since 2026-09-11 Layers 3-4 take the
+re-derivation in ``doc/comspec/fitting_methodology.md`` section 9.  Since 2026-09-11 Layers 3-4 take the
 fluorescence efficiencies and band shapes from the reconstructed GSFC-style database
 (:mod:`fluorescence`, ``ModelParams.profile_source = "gfm"``) and scale g(CO) with the comet's
 heliocentric velocity (Swings effect, ``ModelParams.co_swings``); the previous Gaussian bands
 remain available as ``profile_source = "gaussian"``.  Implements Layers 0-4 of the concept design
-(``doc/model_concept.md``):
+(``doc/comspec/model_concept.md``):
 
 ===== ===================================================================================
 Layer  Content

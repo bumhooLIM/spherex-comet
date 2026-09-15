@@ -3,7 +3,7 @@ Reading the revised photometry and writing every intermediate and final product.
 
 Input schema
 ------------
-``data/apphot_revised/<target>.csv`` from ``spherex_apphot`` -- one row per
+``results/apphot/photometry/<target>.csv`` from ``spherex_apphot`` -- one row per
 (exposure, aperture).  The columns this package relies on:
 
 ``filename, epoch, wl, wlwidth, ap_label, ap_kind, r_ap_km, r_ap_pix,
@@ -675,7 +675,7 @@ def load_fit_input(variant: str, target: str, r_ap_km, phase: int,
 AFRHO_ATTACH_COLUMNS = ["afrho_rh_au", "afrho_10k_cm", "afrho_10k_err_cm", "afrho_10k_method",
                         "afrho_20k_cm", "afrho_20k_err_cm", "afrho_20k_method", "afrho_note"]
 STALE_NOTE = ("stale: the phase's geometry changed since afrho_ztf.csv was built; rerun "
-              "ztf-comet/notebooks/afrho_trends.py and scripts/attach_afrho_ztf.py")
+              "scripts/ztf/afrho_trends.py and scripts/comspec/attach_afrho_ztf.py")
 
 
 def attach_afrho_ztf(df: pd.DataFrame, table: Optional[pd.DataFrame] = None,
@@ -685,8 +685,8 @@ def attach_afrho_ztf(df: pd.DataFrame, table: Optional[pd.DataFrame] = None,
     Attach the ZTF dust context -- r-band A(0°)fρ at the phase's mean r_h -- to a
     per-(target, phase) table such as ``gas_fit.csv`` or ``phase_map.csv``.
 
-    ``results/afrho_ztf.csv`` (one row per target and phase; ``scripts/attach_afrho_ztf.py``
-    builds it from the ``ztf-comet`` project's ``spherex_afrho.csv``) is matched on
+    ``results/comspec/afrho_ztf.csv`` (one row per target and phase; ``scripts/comspec/attach_afrho_ztf.py``
+    builds it from the ZTF stage's ``results/ztf/afrho/spherex_afrho.csv``) is matched on
     (target, phase) and :data:`AFRHO_ATTACH_COLUMNS` are appended.  The estimate was made at
     the r_h and epoch the phase had when that table was built, so a row whose *rh_col* now
     differs by more than *rh_tol* (fractional), or whose *jd_col* by more than *jd_tol_days*,

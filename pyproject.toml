@@ -3,20 +3,23 @@ requires = ["setuptools>=70", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "ztfcomet"
-version = "0.3.0"
-description = "Query and analyse ZTF (Palomar, I41) observations of comets: cutout retrieval, aperture photometry, Af-rho"
+name = "spherex-comet"
+version = "1.0.0"
+description = "SPHEREx comet catalog production: ZTF dust context (ztfcomet), SPHEREx aperture photometry (spherex_apphot) and gas production rates (spherex_comspec)"
 authors = [{ name = "Bumhoo Lim", email = "bumhoo7@snu.ac.kr" }]
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
 
-# Every one of these is imported by the package. The predecessor project
-# declared only astropy and numpy while importing pandas, requests, tqdm and
-# astroquery; see doc/primitive_code_analysis.md (C19).
+# Every one of these is imported by one of the three packages or their drivers.
+# ztfcomet: numpy, pandas, astropy, astroquery, photutils, sep, matplotlib, requests, tqdm
+# spherex_apphot: numpy, pandas, astropy, photutils, scipy, matplotlib, pyarrow (Parquet index), openpyxl (xlsx list)
+# spherex_comspec: numpy, pandas, scipy, matplotlib
+# scripts/comspec/make_figure_slides.py: python-pptx, Pillow
 dependencies = [
     "numpy>=1.24",
     "pandas>=2.0",
+    "scipy>=1.10",
     "astropy>=6.0",
     "astroquery>=0.4.7",
     "photutils>=2.0",
@@ -24,17 +27,26 @@ dependencies = [
     "matplotlib>=3.7",
     "requests>=2.28",
     "tqdm>=4.60",
+    "pyarrow>=14",
+    "openpyxl>=3.1",
 ]
 
 [project.optional-dependencies]
 dev = ["pytest>=7", "nbstripout"]
+# the review deck (scripts/comspec/make_figure_slides.py) and the HDF5 -> FITS
+# exporter (scripts/apphot/h5cut2fits.py, needs the private pqfilt module too)
+deck = ["python-pptx", "Pillow"]
+h5 = ["h5py", "click"]
 
 [project.urls]
 Repository = "https://github.com/bumhooLIM/ztfcomet"
+Comspec = "https://github.com/bumhooLIM/spherex-comspec"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["ztfcomet*"]
+include = ["ztfcomet*", "spherex_apphot*", "spherex_comspec*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# the packages import from the project root without installation
+pythonpath = ["."]

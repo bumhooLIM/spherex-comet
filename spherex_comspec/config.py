@@ -62,7 +62,7 @@ SOURCEFLAG_PRIORITY = ("a", "b", "c", "d", "0")
 # ------------------------------------------------------------------------------- band table
 #: The main model (``ModelParams.profile_source = "gfm"``) takes every band's g-factor *and*
 #: shape from the reconstructed fluorescence database (``data/fluorescence``, see
-#: ``doc/fluorescence_database.md``).  This table is the previous representation -- eight
+#: ``doc/comspec/fluorescence_database.md``).  This table is the previous representation -- eight
 #: Gaussian bands with the Ootsubo et al. (2012, Table 2) g-factors -- kept for the
 #: ``profile_source = "gaussian"`` study variant and for ``KAPPA_PUMP``.  For reference, the
 #: database gives at 70 K and 1 au (photons s^-1 molecule^-1): H2O nu3 3.14e-4, nu1 2.9e-5,
@@ -98,7 +98,7 @@ BANDS: Tuple[Band, ...] = (
 
 #: Emission and continuum windows per band [um], as in ``continuum_subtraction.ipynb``.
 #: ``em`` is punched out of *every* continuum fit; ``cont`` bounds the sample for this band.
-#: 2026-09-14 (method matrix, ``notebooks/method_matrix.py``, decisions doc section 7.9): the
+#: 2026-09-14 (method matrix, ``notebooks/comspec/method_matrix.py``, decisions doc section 7.9): the
 #: 2.7 um emission window starts at 2.55 um, where the H2O template starts (2.60 um lost 6.7 % of
 #: the band; 2.50 um added signal-free channels to the fit) over the 2.30-3.00 um continuum (the
 #: 0.1 um wider 2.20-3.10 window of 2026-09-12 cost one to two clean H2O detections); the CO2
@@ -456,7 +456,7 @@ PLACEHOLDERS: Tuple[dict, ...] = (
          role="every band's strength and shape, including the 4.6-4.9 um H2O hot bands under CO; "
               "validated line by line to ~10 % against the published GSFC values",
          update="applied; residual: HITRAN hot-band completeness and the T_rot dependence of "
-                "the hot-band ratios (doc/fluorescence_database.md section 5)"),
+                "the hot-band ratios (doc/comspec/fluorescence_database.md section 5)"),
     dict(priority=2, quantity="g(CO) versus heliocentric velocity (Swings effect)",
          value="ratio g(v_h)/g(0) from data/fluorescence/co_swings.csv interpolated in T_rot, with "
                "v_h = d r_h/dt from the ephemeris r_hel(t) of each target's exposures "

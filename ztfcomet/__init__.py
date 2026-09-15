@@ -6,7 +6,8 @@ comet's radial surface-brightness profile with field stars on the same frame
 
 Combines what used to be two separate projects: ``ztfssoquery`` (cutout FITS
 retrieval from IRSA) and the ``ztf-comet`` notebooks (Af-rho photometry and
-figures).
+figures).  Since 2026-09-15 it is the ZTF stage of the ``spherex-comet``
+project, beside :mod:`spherex_apphot` and :mod:`spherex_comspec`.
 
 Typical use::
 
@@ -19,12 +20,12 @@ Typical use::
     phot = zc.run_photometry(target)
     zc.plot_afrho({target.name: phot}, filters=["ZTF_r"], x="rh")
 
-``notebooks/main.py`` runs exactly that chain for one or many targets.
+``scripts/ztf/main.py`` runs exactly that chain for one or many targets.
 
 Paths come from :mod:`ztfcomet.directory`; nothing else should build one.
 Per-target constants live in :mod:`ztfcomet.config`.
 
-See ``doc/primitive_code_analysis.md`` for the review that motivated this
+See ``doc/ztf/primitive_code_analysis.md`` for the review that motivated this
 structure, in particular the photometric corrections in :mod:`ztfcomet.phot`.
 """
 
@@ -41,6 +42,7 @@ from .cutout import (build_urls, choose_cutout_size, construct_fitsurl,
                      download_urls, save_urls, verify_downloads)
 from .directory import (
     DATA_ROOT, FIG_ROOT, GAIA_ROOT, PROJECT_ROOT, RESULT_ROOT, SPHEREX_ROOT, SUBJECTS,
+    SPHEREX_APPHOT_DIR, SPHEREX_PHASE_CSV, SPHEREX_COMSPEC_RESULT_DIR, TARGET_LIST,
     fig_kind_path, fig_path, photometry_path, profile_paths, result_path,
     data_dir, fig_dir, result_dir, target_slug,
 )
@@ -74,6 +76,7 @@ __all__ = [
     "Target", "QueryConfig", "PhotConfig", "TARGETS", "get_target", "SOLAR_APPMAG_AB",
     # directory
     "PROJECT_ROOT", "DATA_ROOT", "RESULT_ROOT", "FIG_ROOT", "GAIA_ROOT", "SPHEREX_ROOT", "SUBJECTS",
+    "SPHEREX_APPHOT_DIR", "SPHEREX_PHASE_CSV", "SPHEREX_COMSPEC_RESULT_DIR", "TARGET_LIST",
     "result_path", "fig_path", "fig_kind_path", "photometry_path", "profile_paths",
     "data_dir", "result_dir", "fig_dir", "target_slug",
     # query

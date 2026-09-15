@@ -757,7 +757,7 @@ def test_target_names_survive_a_csv_round_trip(tmp_path):
     assert naive["target"].iloc[0] != "2024E1", "expected pandas to mangle a homogeneous column"
     assert pd.read_csv(single, dtype={"target": str})["target"].iloc[0] == "2024E1"
 
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "notebooks"))
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts" / "ztf"))
     import survey
     for names in (["2024E1"], ["2024E1", "2022E2", "24P"]):
         pd.DataFrame({"target": names, "status": ["ok"] * len(names)}).to_csv(

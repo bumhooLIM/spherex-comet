@@ -2,7 +2,7 @@
 
 This replaces the pipeline that lived in ``notebooks/afrho_240P.ipynb``.  Four
 corrections separate it from that version (C1, C4, C5, C8 of
-``doc/primitive_code_analysis.md``):
+``doc/ztf/primitive_code_analysis.md``):
 
 **C1 — per-frame zeropoint.**  The notebook wrote
 ``phot_target["inst_mag"] + row.zpmag`` where ``row`` was the loop variable left

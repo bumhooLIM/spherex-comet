@@ -26,14 +26,14 @@ nothing with the reason recorded.  The SPHEREx catalog attaches that table
 to its own summaries (``scripts/attach_afrho_ztf.py`` there).
 
 Outputs
-  results/afrho/trends.csv, peaks.csv, breaks.csv, colour.csv, outbursts.csv
-  results/afrho/elements.csv           cached q, e, Tp_jd
-  results/afrho/spherex_afrho.csv      Af-rho at each SPHEREx phase, per aperture, with method and note
-  fig/afrho/trend/<target>.png         per comet: fits, peak, break, outbursts, colour, SPHEREx windows and
+  results/ztf/afrho/trends.csv, peaks.csv, breaks.csv, colour.csv, outbursts.csv
+  results/ztf/afrho/elements.csv           cached q, e, Tp_jd
+  results/ztf/afrho/spherex_afrho.csv      Af-rho at each SPHEREx phase, per aperture, with method and note
+  fig/ztf/afrho/trend/<target>.png         per comet: fits, peak, break, outbursts, colour, SPHEREx windows and
                                        the SPHEREx-epoch Af-rho (red)
-  fig/afrho/trend_slide/<target>_S<k>.png   per SPHEREx phase: the r_h panels and the table with phase k
+  fig/ztf/afrho/trend_slide/<target>_S<k>.png   per SPHEREx phase: the r_h panels and the table with phase k
                                        highlighted, for the catalog's summary slides
-  fig/afrho/survey_overview.png        slope, break and colour distributions
+  fig/ztf/afrho/survey_overview.png        slope, break and colour distributions
 
 ``--figures-only`` redraws every figure from the saved tables without refitting.
 """
@@ -47,7 +47,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import matplotlib

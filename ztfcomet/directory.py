@@ -11,7 +11,11 @@ therefore resolves in this order:
 
 1. ``$ZTFCOMET_DATA`` if set — explicit override, always wins.
 2. The SSD path in :data:`SSD_DATA_ROOT` if that volume is mounted.
-3. ``<project>/data`` — the fallback, so a fresh clone works with no SSD.
+3. ``<project>/data/ztf`` — the fallback, so a fresh clone works with no SSD.
+
+The ZTF stage is one of three in the ``spherex-comet`` project, so its outputs
+are namespaced: ``results/ztf/``, ``fig/ztf/``, ``doc/ztf/``.  The SPHEREx
+stages live in the same tree (``SPHEREX_ROOT`` is the project root).
 
 Layout under each root is ``<root>/<target_slug>/``, matching what is already
 on the SSD.
@@ -37,7 +41,8 @@ log = logging.getLogger(__name__)
 __all__ = [
     "using_fallback_root",
     "PROJECT_ROOT", "DATA_ROOT", "RESULT_ROOT", "FIG_ROOT", "DOC_ROOT",
-    "SSD_DATA_ROOT", "GAIA_ROOT", "target_slug", "data_dir", "result_dir",
+    "SSD_DATA_ROOT", "GAIA_ROOT", "SPHEREX_ROOT", "SPHEREX_APPHOT_DIR", "SPHEREX_PHASE_CSV",
+    "SPHEREX_COMSPEC_RESULT_DIR", "TARGET_LIST", "target_slug", "data_dir", "result_dir",
     "fig_dir", "describe",
 ]
 
@@ -48,9 +53,10 @@ SSD_DATA_ROOT = Path("/Volumes/T7/data/ztf-comet")
 #: flagging.  Override with ``$ZTFCOMET_GAIA``.  Holds ``gaiadr3_all.npy`` and,
 #: ideally, the ``gaiadr3_deccache/`` fast path.
 DEFAULT_GAIA_ROOT = Path.home() / "Desktop" / "data" / "gaia_dr3"
-#: The SPHEREx comet catalog project, whose ``data/apphot`` photometry and
-#: ``data/phase_assignment.csv`` say when SPHEREx observed each comet.
-DEFAULT_SPHEREX_ROOT = Path.home() / "Desktop" / "claude" / "spherex-comet-catalog"
+#: The SPHEREx stages of the same project: ``results/apphot/photometry/`` and
+#: ``data/comspec/phase_assignment.csv`` say when SPHEREx observed each comet,
+#: ``results/comspec/`` holds the production rates.  Before the merge this was
+#: the sibling ``spherex-comet-catalog`` checkout; override with ``$ZTFCOMET_SPHEREX``.
 
 _MARKER = "pyproject.toml"
 
@@ -97,22 +103,32 @@ def _resolve_data_root() -> Path:
     if _probe(SSD_DATA_ROOT):
         return SSD_DATA_ROOT
     log.warning("SSD data root %s is not available; falling back to %s",
-                SSD_DATA_ROOT, PROJECT_ROOT / "data")
-    return PROJECT_ROOT / "data"
+                SSD_DATA_ROOT, PROJECT_ROOT / "data" / "ztf")
+    return PROJECT_ROOT / "data" / "ztf"
 
 
 #: Raw FITS cutouts, ``eph.csv``, ``ztf.csv``, ``fits_urls.txt``.  Large; never committed.
 DATA_ROOT: Path = _resolve_data_root()
 
-#: Photometry tables and other clean, small outputs.  Never committed.
-SPHEREX_ROOT: Path = Path(os.environ.get("ZTFCOMET_SPHEREX", DEFAULT_SPHEREX_ROOT)).expanduser()
-RESULT_ROOT: Path = PROJECT_ROOT / "results"
+#: Root of the SPHEREx stages (apphot photometry, comspec production rates).
+#: The same project since the merge of 2026-09-15.
+SPHEREX_ROOT: Path = Path(os.environ.get("ZTFCOMET_SPHEREX", str(PROJECT_ROOT))).expanduser()
+#: SPHEREx aperture photometry (one CSV per comet) and the per-exposure phase labels.
+SPHEREX_APPHOT_DIR: Path = SPHEREX_ROOT / "results" / "apphot" / "photometry"
+SPHEREX_PHASE_CSV: Path = SPHEREX_ROOT / "data" / "comspec" / "phase_assignment.csv"
+SPHEREX_COMSPEC_RESULT_DIR: Path = SPHEREX_ROOT / "results" / "comspec"
 
-#: Figures.  Never committed.
-FIG_ROOT: Path = PROJECT_ROOT / "fig"
+#: Photometry tables and other clean, small outputs (``results/ztf/``).  Never committed.
+RESULT_ROOT: Path = PROJECT_ROOT / "results" / "ztf"
 
-#: Technical guidebooks and review documents.  Committed.
-DOC_ROOT: Path = PROJECT_ROOT / "doc"
+#: Figures (``fig/ztf/``).  Never committed.
+FIG_ROOT: Path = PROJECT_ROOT / "fig" / "ztf"
+
+#: Technical notes of the ZTF stage (``doc/ztf/``).  Committed.
+DOC_ROOT: Path = PROJECT_ROOT / "doc" / "ztf"
+
+#: The 68-comet working list shared by the three stages.
+TARGET_LIST: Path = PROJECT_ROOT / "data" / "reference" / "sx_comet_list_ver2607.xlsx"
 
 
 def _resolve_gaia_root() -> Path:
@@ -205,7 +221,7 @@ def fig_path(subject: str, filename: str, targetname: str | None = None,
 
 
 def photometry_path(targetname: str, create: bool = True) -> Path:
-    """``results/photometry/<target>.csv`` -- the one table everything downstream reads."""
+    """``results/ztf/photometry/<target>.csv`` -- the one table everything downstream reads."""
     return result_dir("photometry", create) / f"{target_slug(targetname)}.csv"
 
 
@@ -228,6 +244,7 @@ def describe() -> str:
         f"RESULT_ROOT  : {RESULT_ROOT}",
         f"FIG_ROOT     : {FIG_ROOT}",
         f"DOC_ROOT     : {DOC_ROOT}",
+        f"SPHEREX_ROOT : {SPHEREX_ROOT}{'' if SPHEREX_APPHOT_DIR.is_dir() else '   (no apphot photometry yet)'}",
         f"GAIA_ROOT    : {GAIA_ROOT}"
         f"{'' if GAIA_ROOT.is_dir() else '   (MISSING — contamination flagging disabled)'}",
     ])
@@ -241,4 +258,4 @@ def using_fallback_root() -> bool:
     fallback means redoing everything into the wrong place.
     """
     return (not os.environ.get("ZTFCOMET_DATA")
-            and DATA_ROOT == PROJECT_ROOT / "data")
+            and DATA_ROOT == PROJECT_ROOT / "data" / "ztf")

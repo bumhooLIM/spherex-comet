@@ -14,16 +14,16 @@ Examples
 --------
 Everything, all default variants::
 
-    python main.py all
+    python scripts/comspec/main.py all
 
 Only the main variant, then its figures::
 
-    python main.py run --variants dc_main
-    python main.py figures --variants dc_main
+    python scripts/comspec/main.py run --variants dc_main
+    python scripts/comspec/main.py figures --variants dc_main
 
 Two targets, for a quick look::
 
-    python main.py run --variants dc_main --targets 24P 2P
+    python scripts/comspec/main.py run --variants dc_main --targets 24P 2P
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ import time
 from pathlib import Path
 from typing import List, Optional
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from spherex_comspec import __version__  # noqa: E402
 from spherex_comspec import directory as _dir  # noqa: E402

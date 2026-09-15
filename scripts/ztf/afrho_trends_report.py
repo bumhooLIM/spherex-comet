@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Rebuild the tables in doc/afrho_heliocentric_trends.md from results/afrho/.
+"""Rebuild the tables in doc/afrho_heliocentric_trends.md from results/ztf/afrho/.
 
 The narrative in the note is written by hand; everything between the
 ``<!-- generated -->`` markers is produced here, so a rerun of
@@ -13,7 +13,7 @@ import re
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import numpy as np
 import pandas as pd
@@ -21,7 +21,7 @@ import pandas as pd
 import ztfcomet as zc
 
 S = {"target": str}
-DOC = zc.PROJECT_ROOT / "doc" / "afrho_heliocentric_trends.md"
+DOC = zc.DOC_ROOT / "afrho_heliocentric_trends.md"
 
 
 def cell(s):

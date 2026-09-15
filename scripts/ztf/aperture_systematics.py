@@ -20,8 +20,8 @@ depends on Delta.  Four candidates are tested from the tables alone:
    tens of per cent of the 40k flux and almost nothing from 10k.
 
 Outputs
-  fig/afrho/systematics_<target>.png
-  results/afrho/systematics_<target>.csv     per r_h bin: medians of every quantity above
+  fig/ztf/afrho/systematics_<target>.png
+  results/ztf/afrho/systematics_<target>.csv     per r_h bin: medians of every quantity above
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ import argparse
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import matplotlib
 matplotlib.use("Agg")

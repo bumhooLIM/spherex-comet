@@ -3,10 +3,11 @@ Unit and reproduction tests for ``spherex_comspec``.
 
 Run with::
 
-    python spherex-comspec/tests/test_comspec.py
+    python -m pytest tests/test_comspec.py -q
 
-The reproduction tests need ``data/apphot_revised`` and the old
-``results/phase_update_map.csv``; they are skipped when either is absent.
+The reproduction tests need the photometry in ``results/apphot/photometry/`` and the
+previous phase map ``data/reference/phase_update_map_previous.csv``; they are skipped
+when either is absent.
 """
 
 from __future__ import annotations
@@ -30,7 +31,7 @@ from spherex_comspec.fitting import fit_production_rates, build_design_matrix  #
 from spherex_comspec.continuum import process_group, rebuild_continuum  # noqa: E402
 
 HAVE_DATA = (_dir.APPHOT_DIR / "24P.csv").is_file()
-OLD_MAP = _dir.ROOT / "data" / "reference" / "phase_update_map_previous.csv"
+OLD_MAP = _dir.REFERENCE_DIR / "phase_update_map_previous.csv"
 HAVE_OLD = OLD_MAP.is_file()
 
 

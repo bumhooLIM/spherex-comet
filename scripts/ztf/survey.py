@@ -29,10 +29,10 @@ Outputs, all under the data root
 
 Examples
 --------
-    python notebooks/survey.py                        # all 68, resumable
-    python notebooks/survey.py --targets 24P 2P       # a subset
-    python notebooks/survey.py --no-resume            # redo everything
-    python notebooks/survey.py --steps phot figures    # reduce what is on disk
+    python scripts/ztf/survey.py                        # all 68, resumable
+    python scripts/ztf/survey.py --targets 24P 2P       # a subset
+    python scripts/ztf/survey.py --no-resume            # redo everything
+    python scripts/ztf/survey.py --steps phot figures    # reduce what is on disk
 """
 
 from __future__ import annotations
@@ -49,7 +49,7 @@ import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import matplotlib
 matplotlib.use("Agg")
@@ -72,7 +72,7 @@ log = logging.getLogger("ztfcomet.survey")
 socket.setdefaulttimeout(300)
 
 STEPS = ("query", "download", "phot", "profile", "figures", "cutouts")
-DEFAULT_LIST = "doc/sx_comet_list_ver2607.xlsx"
+DEFAULT_LIST = "data/reference/sx_comet_list_ver2607.xlsx"
 
 
 # --------------------------------------------------------------------- helpers
@@ -312,7 +312,7 @@ def process(designation, args, root, prior=None):
     if "cutouts" in args.steps and table is not None and not table.empty:
         # One PNG per frame, drawn with the smallest aperture that passed the
         # scale test on that target; the annotated cutouts live with the
-        # photometry, under fig/photometry/<target>/cutout/.
+        # photometry, under fig/ztf/photometry/<target>/cutout/.
         ref = table[np.isclose(table["rho_km"], table["rho_km"].min())]
         written = zc.save_all_cutouts(ref, datadir, zc.fig_dir("photometry", target.name) / "cutout",
                                       target=target, dpi=50, progress=False)
