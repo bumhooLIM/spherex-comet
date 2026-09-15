@@ -2,8 +2,10 @@
 
 Driver `notebooks/afrho_trends.py`; science in `ztfcomet/activity.py`.  Tables
 in `results/afrho/` (`trends.csv`, `peaks.csv`, `breaks.csv`, `colour.csv`,
-`outbursts.csv`, `spherex_windows.csv`); figures `fig/afrho/trend/<comet>.png`
-(fits, peak, breaks, outbursts, colour, SPHEREx windows), `fig/afrho/rh/`,
+`outbursts.csv`, `spherex_windows.csv`, `spherex_afrho.csv`); figures
+`fig/afrho/trend/<comet>.png` (fits, peak, breaks, outbursts, colour, SPHEREx
+windows, and in red the Afρ at each SPHEREx phase), `fig/afrho/trend_slide/`
+(one figure per SPHEREx phase for the catalog's review deck), `fig/afrho/rh/`,
 `fig/afrho/apertures/` and `fig/afrho/survey_overview.png`.  56 comets;
 r-band is the main series and g is analysed separately; ρ = 10,000 and
 20,000 km.  The aperture question raised by C/2024 E1 is answered in
@@ -53,7 +55,29 @@ r-band is the main series and g is analysed separately; ρ = 10,000 and
   quiet frame of every phase, drawn in black as a guide to the overall shape.
 - **SPHEREx windows**: the JD and r_h ranges of each SPHEREx phase group, from
   the catalog's `phase_assignment.csv` and `apphot/`, are shaded on every
-  panel (S1, S2, …): 147 windows over 56 comets.
+  panel (S1, S2, …): 165 windows over 56 comets (the catalog grouping of
+  2026-09-14; `spherex_windows.py` is rebuilt by every full run).
+- **Afρ at the SPHEREx epochs** (`activity.afrho_at_epoch`,
+  `results/afrho/spherex_afrho.csv`, the red markers and the table strip of
+  the trend figures): for each SPHEREx phase, at the mean r_h of the channels
+  that carried its production rate (the exposure mean where no rate was
+  fitted), r-band, both apertures.  Three estimates in order of what they
+  assume — *direct*: at least two clean frames within 5 d of the window, each
+  moved to ⟨r_h⟩ along the most local law of grade A–C and averaged with
+  weights, the error that of the mean (scaled by χ²_ν) plus the slope term;
+  *trend*: no frames then, but ⟨r_h⟩ lies inside a fitted law of the phase
+  the epoch falls in (the rising/fading split at the peak, else
+  inbound/outbound at T_p) — the most local of the primary law, its segments
+  and its tail, any grade, since the *level* of a flat well-sampled series is
+  measured even where its slope is not; the error carries the law's level and
+  slope uncertainties and its RMS scatter, because the question is the
+  comet's brightness at that epoch, not the mean law; *trend_extrap*: ⟨r_h⟩
+  at most 0.1 dex beyond the primary law, grade A–C only.  Otherwise no value,
+  and the note says why: no frames at that aperture, ZTF fitted only the other
+  phase of the orbit, or ⟨r_h⟩ too far outside the data.  A single frame in
+  the window is used only when no law can be evaluated (error floor 0.1 dex).
+  Frames inside an outburst are used as they are — the value at the time is
+  the question — and counted.
 - **Colour**: same-night g/r pairs, excess over solar
   −2.5 log₁₀(Afρ_g / Afρ_r), with a two-level step as the change-point model.
 
@@ -101,7 +125,7 @@ after every run of `afrho_trends.py`.  What it shows, in brief:
 | inbound only | 5.14 [3.19, 7.43] (n = 6) | 4.70 [0.80, 5.76] (n = 8) |
 | outbound only | 3.18 [0.44, 4.22] (n = 11) | 2.64 [0.98, 3.77] (n = 12) |
 
-Survey clean rate 51.2% after the anomaly flag (311 rows).  Of 14 two-sided comets, 8 have an interior maximum and are split there (6 bracketed on both sides).  11 primary legs at 10,000 km prefer a broken law and are divided: 10P, 145P, 2022E2, 2023A3, 2023R1, 2024E1, 2024J3, 2024L5, 2025A6, 2025K1, 2025M2, 2025Q3, 24P, 40P.  7 outburst windows on 5 comets are excluded from the fits; 8 comets have an isolated tail set aside.  SPHEREx: 147 windows over 56 comets.
+Survey clean rate 51.2% after the anomaly flag (311 rows).  Of 14 two-sided comets, 8 have an interior maximum and are split there (6 bracketed on both sides).  11 primary legs at 10,000 km prefer a broken law and are divided: 10P, 145P, 2022E2, 2023A3, 2023R1, 2024E1, 2024J3, 2024L5, 2025A6, 2025K1, 2025M2, 2025Q3, 24P, 40P.  7 outburst windows on 5 comets are excluded from the fits; 8 comets have an isolated tail set aside.  SPHEREx: 165 windows over 56 comets.
 
 ### Activity peaks
 
@@ -341,4 +365,193 @@ Scaled error, (N), grade; A/B in bold.  Segments (`r_h<` / `r_h>`) are the divid
 | 499P | 1.33–1.76 | outbound | -1.88 ± 2.37 (6) D | — |
 | 63P | 2.45–2.76 | inbound | +6.72 ± 2.53 (10) D | +9.05 ± 3.13 (8) D |
 | 78P | 2.58–3.54 | inbound | **+4.08 ± 0.27 (50) B** | **+4.38 ± 0.40 (42) B** |
+
+### Afρ at the SPHEREx epochs
+
+Per SPHEREx phase group, the ZTF r-band A(0°)fρ at the group's mean r_h (`spherex_afrho.csv`; `activity.afrho_at_epoch`).  `direct`: clean frames within 5 d of the window, moved to ⟨r_h⟩ along the local law and averaged; `trend`: the fitted law of the orbital phase the epoch falls in, at ⟨r_h⟩; `trend_extrap`: that law extended by at most 0.1 dex; `none`: no estimate, with the reason.  Errors are 1σ in log space (the scatter about the law included for `trend`); the linear error quoted is the symmetric approximation, the 1σ range is in the table.
+
+| ρ (km) | phases | direct | trend | trend_extrap | none | with a value |
+|---|---|---|---|---|---|---|
+| 10k | 165 | 79 | 25 | 12 | 49 | 116 |
+| 20k | 165 | 79 | 33 | 8 | 45 | 120 |
+
+Why there is no estimate:
+
+| reason | 10,000 km | 20,000 km |
+|---|---|---|
+| the law is grade D and ⟨r_h⟩ lies outside its data | 19 | 20 |
+| ZTF fitted only the other phase of the orbit | 17 | 15 |
+| no clean ZTF r-band frames at this aperture | 6 | 0 |
+| no fitted trend at this aperture | 4 | 7 |
+| ⟨r_h⟩ more than 0.1 dex beyond the fitted range | 3 | 3 |
+
+Per phase (value ± error in cm, then how: method, points, grade of the law used):
+
+| comet | phase | ⟨r_h⟩ (au) | T−T_p (d) | 10,000 km | how | 20,000 km | how |
+|---|---|---|---|---|---|---|---|
+| 10P | S1 | 3.63 | -442 | 32.5 ± 4.4 | direct (4) B | 20.9 ± 8.8 | direct (1) |
+| 10P | S2 | 2.03 | -147 | 31.0 ± 11 | trend (21) B | 31.2 ± 12 | trend (23) A |
+| 10P | S3 | 1.91 | -128 | 32.5 ± 4.8 | direct (4) B | 40.5 ± 16 | trend (23) A |
+| 10P | S4 | 1.66 | -84 | 80.1 ± 4.1 | direct (4) C | 73.7 ± 4.6 | direct (2) A |
+| 124P | S1 | 2.67 | -247 | 7.02 ± 2.7 | trend_extrap (16) C | — | the law is grade D and ⟨r_h⟩ lies outside its data |
+| 124P | S2 | 2.54 | -224 | 7.63 ± 2.6 | trend_extrap (16) C | — | the law is grade D and ⟨r_h⟩ lies outside its data |
+| 124P | S3 | 1.89 | -83 | 13.0 ± 4.8 | trend_extrap (16) C | — | the law is grade D and ⟨r_h⟩ lies outside its data |
+| 131P | S1 | 2.88 | -255 | — | the law is grade D and ⟨r_h⟩ lies outside its data | — | the law is grade D and ⟨r_h⟩ lies outside its data |
+| 131P | S2 | 2.46 | -78 | 15.4 ± 5.1 | direct (1) | — | the law is grade D and ⟨r_h⟩ lies outside its data |
+| 145P | S1 | 2.90 | -262 | 2.33 ± 0.45 | trend_extrap (38) B | 1.32 ± 0.28 | trend_extrap (37) B |
+| 145P | S2 | 2.84 | -250 | 2.84 ± 0.53 | trend_extrap (38) B | 1.64 ± 0.34 | trend_extrap (37) B |
+| 145P | S3 | 2.03 | -81 | 45.0 ± 1.5 | direct (9) B | 34.2 ± 1.3 | direct (10) B |
+| 164P | S1 | 2.40 | +189 | 77.0 ± 7.7 | direct (4) B | 54.9 ± 5.3 | direct (5) B |
+| 164P | S2 | 3.26 | +341 | 82.3 ± 16 | trend_extrap (75) B | 62.1 ± 13 | trend_extrap (67) B |
+| 171P | S1 | 1.84 | +55 | 17.2 ± 2.8 | direct (4) C | 16.8 ± 4.4 | direct (3) C |
+| 171P | S2 | 2.55 | +217 | 0.748 ± 0.29 | trend_extrap (40) C | 1.04 ± 0.41 | trend_extrap (19) C |
+| 171P | S3 | 2.66 | +238 | — | ⟨r_h⟩ more than 0.1 dex beyond the fitted range | — | ⟨r_h⟩ more than 0.1 dex beyond the fitted range |
+| 172P | S1 | 3.41 | -138 | 31.1 ± 4.7 | direct (3) | — | the law is grade D and ⟨r_h⟩ lies outside its data |
+| 172P | S2 | 3.39 | -106 | 30.3 ± 6.1 | trend (18) D | — | the law is grade D and ⟨r_h⟩ lies outside its data |
+| 172P | S3 | 3.42 | +158 | — | ZTF fitted only the other phase of the orbit | — | ZTF fitted only the other phase of the orbit |
+| 2021G2 | S1 | 5.49 | +301 | 4,292 ± 337 | trend (17) B | 4,197 ± 129 | direct (2) B |
+| 2021G2 | S2 | 6.46 | +546 | 3,609 ± 338 | trend (17) B | 3,351 ± 105 | direct (4) B |
+| 2021G2 | S3 | 6.69 | +595 | 3,459 ± 752 | direct (2) B | 3,157 ± 120 | direct (5) B |
+| 2022E2 | S1 | 4.64 | +324 | 2,055 ± 141 | direct (2) C | 2,098 ± 118 | direct (2) B |
+| 2022E2 | S2 | 5.26 | +436 | 1,576 ± 113 | trend (36) C | 1,532 ± 120 | trend (47) B |
+| 2022N2 | S1 | 3.83 | +17 | 1,672 ± 16 | direct (6) | 1,589 ± 31 | direct (5) |
+| 2022N2 | S2 | 4.17 | +189 | 1,625 ± 17 | direct (9) | 1,533 ± 20 | direct (9) |
+| 2022QE78 | S1 | 5.49 | +56 | — | the law is grade D and ⟨r_h⟩ lies outside its data | 2,925 ± 75 | direct (4) |
+| 2022QE78 | S2 | 5.70 | +218 | — | the law is grade D and ⟨r_h⟩ lies outside its data | — | the law is grade D and ⟨r_h⟩ lies outside its data |
+| 2022R6 | S1 | 6.59 | +86 | — | no clean ZTF r-band frames at this aperture | 1,999 ± 46 | direct (12) |
+| 2022R6 | S2 | 6.75 | +236 | — | no clean ZTF r-band frames at this aperture | 1,960 ± 142 | trend (49) D |
+| 2023A3 | S1 | 3.65 | +219 | 1,144 ± 93 | trend (21) A | 957 ± 136 | direct (2) A |
+| 2023A3 | S2 | 4.83 | +324 | 596 ± 60 | direct (3) A | 511 ± 34 | direct (4) A |
+| 2023A3 | S3 | 5.29 | +368 | 426 ± 49 | trend_extrap (26) A | 387 ± 74 | trend (38) A |
+| 2023A3 | S4 | 7.14 | +564 | — | ⟨r_h⟩ more than 0.1 dex beyond the fitted range | 201 ± 72 | trend_extrap (45) B |
+| 2023C2 | S1 | 3.45 | +233 | 916 ± 32 | direct (5) A | 783 ± 34 | direct (5) A |
+| 2023C2 | S2 | 3.75 | +274 | 1,026 ± 59 | direct (3) A | 798 ± 52 | direct (3) A |
+| 2023C2 | S3 | 4.56 | +378 | 1,201 ± 64 | direct (3) A | 945 ± 38 | direct (6) A |
+| 2023F3 | S1 | 5.26 | +114 | — | no fitted trend at this aperture | — | the law is grade D and ⟨r_h⟩ lies outside its data |
+| 2023F3 | S2 | 5.72 | +322 | — | no fitted trend at this aperture | 762 ± 32 | direct (3) |
+| 2023F3 | S3 | 6.21 | +458 | — | no fitted trend at this aperture | — | the law is grade D and ⟨r_h⟩ lies outside its data |
+| 2023H5 | S1 | 4.55 | +177 | — | ZTF fitted only the other phase of the orbit | — | ZTF fitted only the other phase of the orbit |
+| 2023R1 | S1 | 4.51 | -309 | 1,136 ± 66 | direct (2) C | 1,052 ± 22 | direct (7) C |
+| 2023R1 | S2 | 4.00 | -200 | 1,132 ± 96 | direct (3) C | 979 ± 59 | trend (49) C |
+| 2023R1 | S3 | 3.57 | -5 | 4,015 ± 308 | trend (17) D | 2,886 ± 308 | trend (31) D |
+| 2023R1 | S4 | 3.57 | +6 | 4,163 ± 63 | direct (15) B | 3,224 ± 49 | direct (14) B |
+| 2023RS61 | S1 | 8.97 | -1207 | — | no clean ZTF r-band frames at this aperture | 4,000 ± 145 | direct (10) |
+| 2023RS61 | S2 | 8.74 | -1036 | — | no clean ZTF r-band frames at this aperture | 1,181 ± 111 | direct (3) |
+| 2023T3 | S1 | 3.79 | +146 | 475 ± 20 | direct (2) | 398 ± 17 | direct (2) C |
+| 2023T3 | S2 | 5.13 | +422 | — | the law is grade D and ⟨r_h⟩ lies outside its data | 226 ± 76 | trend (14) C |
+| 2023V1 | S1 | 5.10 | -40 | 357 ± 15 | direct (9) | 310 ± 11 | direct (17) |
+| 2023V1 | S2 | 5.33 | +208 | 248 ± 77 | direct (1) | 222 ± 26 | direct (3) |
+| 2024A1 | S1 | 4.05 | +137 | 484 ± 24 | direct (10) | 417 ± 18 | direct (10) |
+| 2024A1 | S2 | 4.52 | +271 | — | the law is grade D and ⟨r_h⟩ lies outside its data | — | the law is grade D and ⟨r_h⟩ lies outside its data |
+| 2024E1 | S1 | 3.70 | -234 | 804 ± 8.3 | direct (15) B | 678 ± 7.8 | direct (19) B |
+| 2024E1 | S2 | 3.18 | -191 | 813 ± 14 | direct (6) A | 730 ± 15 | direct (8) A |
+| 2024G4 | S1 | 5.22 | -232 | 320 ± 27 | direct (4) | 241 ± 19 | direct (5) C |
+| 2024G4 | S2 | 4.91 | +34 | 329 ± 53 | direct (3) | 245 ± 17 | direct (9) |
+| 2024J2 | S1 | 2.46 | +135 | 82.8 ± 20 | direct (1) | 81.2 ± 20 | direct (1) |
+| 2024J2 | S2 | 3.52 | +258 | — | no fitted trend at this aperture | — | no fitted trend at this aperture |
+| 2024J3 | S1 | 5.38 | -442 | — | the law is grade D and ⟨r_h⟩ lies outside its data | 2,370 ± 177 | trend (44) B |
+| 2024J3 | S2 | 4.29 | -214 | — | the law is grade D and ⟨r_h⟩ lies outside its data | 2,570 ± 233 | trend_extrap (56) B |
+| 2024L5 | S1 | 3.50 | +72 | 486 ± 41 | direct (4) B | 367 ± 33 | direct (4) B |
+| 2024L5 | S2 | 3.54 | +91 | 548 ± 72 | trend (27) B | 414 ± 45 | trend (48) B |
+| 2024L5 | S3 | 4.30 | +279 | 274 ± 32 | direct (2) B | 230 ± 13 | direct (7) B |
+| 2024L5 | S4 | 5.03 | +405 | 96.5 ± 12 | trend (33) C | 82.9 ± 9.7 | trend (42) C |
+| 2024N1 | S1 | 4.44 | -73 | 84.4 ± 4.3 | direct (24) | 63.9 ± 3.7 | direct (22) |
+| 2024N1 | S2 | 4.41 | -33 | 84.4 ± 14 | trend (30) D | 59.7 ± 15 | trend (25) D |
+| 2024N1 | S3 | 4.50 | +114 | 104 ± 14 | direct (4) | 104 ± 17 | direct (8) |
+| 2025A6 | S1 | 2.14 | +112 | — | ZTF fitted only the other phase of the orbit | — | ZTF fitted only the other phase of the orbit |
+| 2025A6 | S2 | 2.47 | +136 | — | ZTF fitted only the other phase of the orbit | — | ZTF fitted only the other phase of the orbit |
+| 2025A6 | S3 | 3.23 | +194 | — | ZTF fitted only the other phase of the orbit | — | ZTF fitted only the other phase of the orbit |
+| 2025K1 | S1 | 2.49 | -127 | 93.1 ± 8.9 | direct (5) B | 56.3 ± 5.9 | direct (4) B |
+| 2025K1 | S2 | 2.26 | -111 | 133 ± 9.1 | direct (3) B | 88.1 ± 5.9 | direct (3) B |
+| 2025K1 | S3 | 1.36 | -56 | 246 ± 72 | trend (23) B | 314 ± 90 | trend (28) B |
+| 2025K1 | S4 | 1.08 | +41 | — | ⟨r_h⟩ more than 0.1 dex beyond the fitted range | — | ⟨r_h⟩ more than 0.1 dex beyond the fitted range |
+| 2025K1 | S5 | 1.74 | +78 | 49.9 ± 3.3 | direct (2) B | 60.0 ± 4.0 | direct (2) B |
+| 2025K1 | S6 | 1.83 | +84 | 40.7 ± 6.8 | trend (7) B | 49.4 ± 10 | trend (7) B |
+| 2025K1 | S7 | 1.99 | +94 | 29.5 ± 2.3 | direct (5) B | 36.2 ± 3.4 | direct (5) B |
+| 2025L1 | S1 | 3.06 | -206 | — | ZTF fitted only the other phase of the orbit | — | ZTF fitted only the other phase of the orbit |
+| 2025L1 | S2 | 2.79 | -177 | — | ZTF fitted only the other phase of the orbit | — | ZTF fitted only the other phase of the orbit |
+| 2025L1 | S3 | 2.63 | -160 | — | ZTF fitted only the other phase of the orbit | — | ZTF fitted only the other phase of the orbit |
+| 2025L1 | S4 | 1.77 | +42 | 13.4 ± 1.2 | direct (3) | 20.5 ± 4.0 | direct (2) |
+| 2025L1 | S5 | 2.18 | +108 | — | the law is grade D and ⟨r_h⟩ lies outside its data | — | the law is grade D and ⟨r_h⟩ lies outside its data |
+| 2025L1 | S6 | 2.33 | +126 | — | the law is grade D and ⟨r_h⟩ lies outside its data | — | the law is grade D and ⟨r_h⟩ lies outside its data |
+| 2025L2 | S1 | 3.53 | -211 | 46.2 ± 7.0 | trend (9) D | 28.5 ± 6.2 | trend (8) D |
+| 2025L2 | S2 | 2.96 | -85 | — | the law is grade D and ⟨r_h⟩ lies outside its data | — | the law is grade D and ⟨r_h⟩ lies outside its data |
+| 2025M2 | S1 | 8.54 | -923 | — | the law is grade D and ⟨r_h⟩ lies outside its data | 315 ± 46 | trend_extrap (74) B |
+| 2025M2 | S2 | 7.49 | -773 | — | the law is grade D and ⟨r_h⟩ lies outside its data | 458 ± 70 | trend (46) B |
+| 2025M2 | S3 | 6.02 | -569 | — | the law is grade D and ⟨r_h⟩ lies outside its data | 882 ± 123 | trend (74) B |
+| 2025Q3 | S1 | 2.89 | -173 | 37.1 ± 8.2 | direct (4) B | 48.0 ± 16 | direct (3) B |
+| 2025Q3 | S2 | 2.69 | -145 | 31.6 ± 3.3 | direct (3) B | 21.6 ± 16 | trend (4) D |
+| 2025Q3 | S3 | 2.18 | -46 | 176 ± 8.2 | direct (3) C | 125 ± 5.8 | direct (4) C |
+| 2025R1 | S1 | 2.17 | -75 | 26.1 ± 3.2 | direct (3) C | 17.9 ± 2.9 | trend (9) C |
+| 2025R1 | S2 | 2.02 | -33 | 29.1 ± 1.3 | direct (6) C | 18.2 ± 1.4 | direct (5) C |
+| 2025R1 | S3 | 1.99 | -21 | 26.3 ± 4.1 | direct (2) C | 17.6 ± 2.8 | direct (2) C |
+| 2025R1 | S4 | 2.56 | +137 | 33.8 ± 7.4 | trend_extrap (18) C | — | ZTF fitted only the other phase of the orbit |
+| 2025R1 | S5 | 2.76 | +164 | 35.5 ± 9.3 | trend_extrap (18) C | — | ZTF fitted only the other phase of the orbit |
+| 2025R2 | S1 | 1.10 | +45 | 833 ± 77 | trend (3) D | — | ⟨r_h⟩ more than 0.1 dex beyond the fitted range |
+| 2025R2 | S2 | 2.00 | +101 | 94.5 ± 2.9 | direct (3) B | 112 ± 7.9 | trend (15) B |
+| 2025R2 | S3 | 2.23 | +117 | 70.8 ± 4.6 | trend (16) B | 82.9 ± 6.1 | trend (15) B |
+| 2025R2 | S4 | 2.33 | +124 | 67.6 ± 7.8 | direct (2) B | 77.5 ± 4.0 | direct (2) B |
+| 2025W2 | S1 | 1.57 | -44 | — | the law is grade D and ⟨r_h⟩ lies outside its data | 23.3 ± 12 | trend (4) D |
+| 2025W2 | S2 | 1.53 | -34 | 7.27 ± 2.8 | direct (1) | 15.0 ± 9.2 | direct (3) |
+| 2025W2 | S3 | 1.50 | -25 | 6.75 ± 1.7 | trend (3) D | 5.60 ± 1.1 | direct (2) |
+| 2025W2 | S4 | 1.46 | +9 | — | ZTF fitted only the other phase of the orbit | — | ZTF fitted only the other phase of the orbit |
+| 210P | S1 | 2.47 | -163 | — | ZTF fitted only the other phase of the orbit | — | ZTF fitted only the other phase of the orbit |
+| 210P | S2 | 1.38 | -70 | — | ZTF fitted only the other phase of the orbit | — | ZTF fitted only the other phase of the orbit |
+| 210P | S3 | 1.12 | -52 | — | ZTF fitted only the other phase of the orbit | — | ZTF fitted only the other phase of the orbit |
+| 210P | S4 | 1.08 | -49 | — | ZTF fitted only the other phase of the orbit | — | ZTF fitted only the other phase of the orbit |
+| 210P | S5 | 1.54 | +82 | 32.4 ± 4.0 | trend (56) B | 32.9 ± 4.3 | trend (44) B |
+| 210P | S6 | 1.67 | +92 | 24.2 ± 1.2 | direct (6) B | 26.3 ± 2.2 | direct (6) B |
+| 210P | S7 | 1.88 | +109 | 16.2 ± 2.0 | direct (2) B | 17.8 ± 2.4 | trend (44) B |
+| 217P | S1 | 2.26 | +165 | 124 ± 25 | direct (5) B | 111 ± 21 | direct (4) B |
+| 217P | S2 | 3.32 | +304 | 51.7 ± 3.8 | direct (5) B | 47.6 ± 3.8 | direct (4) B |
+| 217P | S3 | 3.42 | +319 | 37.2 ± 3.8 | direct (4) B | 37.4 ± 3.6 | direct (5) B |
+| 235P | S1 | 2.06 | +73 | 455 ± 7.2 | direct (5) C | 369 ± 6.0 | direct (4) C |
+| 235P | S2 | 2.15 | +109 | 356 ± 37 | trend (71) C | 305 ± 35 | trend (63) C |
+| 240P | S1 | 2.39 | -143 | — | the law is grade D and ⟨r_h⟩ lies outside its data | — | the law is grade D and ⟨r_h⟩ lies outside its data |
+| 240P | S2 | 2.35 | -129 | 442 ± 18 | direct (7) | 364 ± 14 | direct (7) |
+| 240P | S3 | 2.26 | -98 | 393 ± 13 | direct (6) | 322 ± 11 | direct (4) |
+| 240P | S4 | 2.16 | +52 | 216 ± 7.0 | direct (9) | 192 ± 7.0 | direct (6) |
+| 24P | S1 | 1.91 | -121 | 8.15 ± 1.5 | direct (2) A | 12.0 ± 3.9 | trend (11) B |
+| 24P | S2 | 1.82 | -111 | 10.6 ± 1.2 | direct (2) A | 14.8 ± 4.6 | trend (11) B |
+| 24P | S3 | 1.74 | -102 | 12.9 ± 0.69 | direct (5) A | 13.1 ± 0.88 | direct (3) B |
+| 24P | S4 | 1.58 | -82 | 24.4 ± 3.8 | trend (21) A | 26.7 ± 7.5 | trend (11) B |
+| 24P | S5 | 1.34 | -49 | 74.9 ± 12 | trend (21) A | 72.5 ± 10 | trend (9) C |
+| 24P | S6 | 1.21 | -20 | 188 ± 8.2 | direct (5) B | 208 ± 11 | direct (4) C |
+| 24P | S7 | 1.19 | -7 | 293 ± 19 | direct (4) B | 296 ± 23 | direct (3) C |
+| 24P | S8 | 1.20 | +12 | 356 ± 8.9 | direct (9) B | 366 ± 41 | direct (7) C |
+| 261P | S1 | 2.53 | -204 | 2.82 ± 0.76 | trend_extrap (56) C | — | the law is grade D and ⟨r_h⟩ lies outside its data |
+| 261P | S2 | 2.14 | -93 | 29.6 ± 1.0 | direct (10) C | 21.5 ± 1.1 | direct (6) |
+| 261P | S3 | 2.05 | -50 | 56.4 ± 4.4 | direct (4) C | 40.9 ± 3.9 | direct (3) |
+| 29P | S1 | 6.30 | +2429 | — | no clean ZTF r-band frames at this aperture | 2,621 ± 1,205 | trend (54) D |
+| 29P | S2 | 6.31 | +2579 | — | no clean ZTF r-band frames at this aperture | 2,738 ± 410 | direct (2) |
+| 2P | S1 | 4.10 | -593 | 31.0 ± 5.7 | trend (25) D | 21.4 ± 7.9 | trend (8) D |
+| 2P | S2 | 3.93 | -456 | — | the law is grade D and ⟨r_h⟩ lies outside its data | — | the law is grade D and ⟨r_h⟩ lies outside its data |
+| 302P | S1 | 3.33 | +121 | 238 ± 5.2 | direct (5) C | 185 ± 3.8 | direct (6) C |
+| 302P | S2 | 3.52 | +284 | 204 ± 6.2 | direct (9) C | 171 ± 5.0 | direct (9) C |
+| 306P | S1 | 1.63 | -90 | — | ZTF fitted only the other phase of the orbit | — | no fitted trend at this aperture |
+| 306P | S2 | 1.52 | -73 | — | ZTF fitted only the other phase of the orbit | — | no fitted trend at this aperture |
+| 306P | S3 | 1.42 | -55 | — | ZTF fitted only the other phase of the orbit | — | no fitted trend at this aperture |
+| 306P | S4 | 1.30 | -17 | — | ZTF fitted only the other phase of the orbit | 2.87 ± 0.88 | direct (1) |
+| 306P | S5 | 1.28 | +7 | 2.63 ± 0.66 | direct (2) | 2.87 ± 0.88 | direct (1) |
+| 40P | S1 | 2.23 | +130 | 52.9 ± 2.5 | direct (5) B | 39.1 ± 2.1 | direct (4) B |
+| 43P | S1 | 2.61 | +128 | 126 ± 5.2 | direct (6) B | 98.6 ± 4.4 | direct (6) B |
+| 43P | S2 | 3.13 | +287 | 54.8 ± 4.7 | trend_extrap (95) B | 47.8 ± 4.1 | trend_extrap (88) B |
+| 47P | S1 | 2.93 | -149 | — | the law is grade D and ⟨r_h⟩ lies outside its data | — | the law is grade D and ⟨r_h⟩ lies outside its data |
+| 47P | S2 | 2.81 | +22 | 167 ± 4.3 | direct (9) | 136 ± 4.7 | direct (8) |
+| 486P | S1 | 2.39 | +92 | 36.9 ± 1.3 | direct (10) C | 26.8 ± 1.2 | direct (9) C |
+| 486P | S2 | 2.84 | +258 | 27.4 ± 3.0 | direct (3) C | 26.3 ± 3.5 | direct (3) C |
+| 48P | S1 | 2.38 | +168 | 107 ± 3.4 | direct (10) B | 106 ± 3.2 | direct (10) B |
+| 48P | S2 | 3.10 | +337 | 39.4 ± 4.0 | direct (5) B | 56.6 ± 6.9 | direct (6) B |
+| 491P | S1 | 4.08 | +383 | 165 ± 7.9 | direct (6) C | 115 ± 7.5 | direct (5) C |
+| 493P | S1 | 3.90 | -128 | 252 ± 15 | direct (7) | 186 ± 14 | direct (6) |
+| 493P | S2 | 3.83 | +34 | 290 ± 34 | trend (39) D | 260 ± 28 | direct (2) |
+| 499P | S1 | 1.33 | +68 | 2.40 ± 1.5 | trend (6) D | — | no fitted trend at this aperture |
+| 499P | S2 | 1.43 | +78 | 2.54 ± 0.61 | direct (4) | 3.35 ± 1.7 | direct (2) |
+| 499P | S3 | 1.58 | +94 | 2.07 ± 0.35 | direct (3) | — | no fitted trend at this aperture |
+| 499P | S4 | 1.71 | +109 | 4.69 ± 2.0 | direct (2) | — | no fitted trend at this aperture |
+| 63P | S1 | 3.25 | -286 | — | the law is grade D and ⟨r_h⟩ lies outside its data | — | the law is grade D and ⟨r_h⟩ lies outside its data |
+| 63P | S2 | 2.25 | -112 | — | the law is grade D and ⟨r_h⟩ lies outside its data | — | the law is grade D and ⟨r_h⟩ lies outside its data |
+| 78P | S1 | 3.54 | -418 | 58.7 ± 9.6 | trend (50) B | 40.4 ± 10 | trend (42) B |
+| 78P | S2 | 3.38 | -383 | 70.3 ± 11 | trend (50) B | 49.1 ± 12 | trend (42) B |
+| 78P | S3 | 2.87 | -271 | 130 ± 3.2 | direct (15) B | 93.1 ± 3.0 | direct (12) B |
 <!-- /generated -->

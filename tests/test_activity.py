@@ -198,3 +198,88 @@ def test_plateau_peak_still_splits_the_phases():
     pk = peaks.iloc[0]
     assert pk["interior"] and not pk["bracketed"]
     assert set(trends[trends["primary"] & (trends["split"] == "peak")]["leg"]) == {"rising", "fading"}
+
+
+# ------------------------------------------------------------ epoch value
+def _epoch_setup(x_true=2.5, a=3.0, tp=2461000.0):
+    """A one-leg inbound series over 1.2-3 au and its trend rows, as
+    ``analyse`` would write them."""
+    lr, y, e = _series(x_true, a, n=40, err=0.03)
+    rh = 10 ** lr
+    # inbound: r_h falls with time, 150 days before perihelion at 1.2 au
+    jd = tp - 150.0 - 300.0 * (lr - lr.min()) / np.ptp(lr)
+    pts = pd.DataFrame(dict(obsjd=jd, r=rh, log_rh=lr, log_afrho=y, log_afrho_err=e, leg="inbound"))
+    fit = ac.fit_powerlaw(lr, y, e, n_boot=100)
+    row = dict(target="T", band="r", rho_km=10000, split="perihelion", leg="inbound", primary=True,
+               two_sided=False, grade="A", segment_of="", has_segments=False,
+               rh_min=float(rh.min()), rh_max=float(rh.max()), t_peak=np.nan, **fit)
+    return pts, pd.DataFrame([row]), tp
+
+
+def test_epoch_value_from_the_trend_inside_the_range():
+    pts, tr, tp = _epoch_setup()
+    rh0 = 2.0
+    far = pts["obsjd"].min() - 400.0                 # no frames anywhere near this epoch
+    r = ac.afrho_at_epoch(pts, tr, rh0, far, far, far + 10, tp_jd=tp)
+    assert r["method"] == "trend" and r["leg"] == "inbound"
+    assert abs(r["log_afrho"] - (3.0 - 2.5 * np.log10(rh0))) < 3 * r["log_afrho_err"]
+    assert r["afrho_lo_cm"] < r["afrho_cm"] < r["afrho_hi_cm"]
+
+
+def test_epoch_prefers_the_frames_inside_the_window():
+    pts, tr, tp = _epoch_setup()
+    jd0 = float(pts["obsjd"].iloc[20])
+    rh0 = float(pts["r"].iloc[20])
+    # the comet is 0.3 dex above its own law during this window (an outburst);
+    # the estimator pads the window by 5 d, so lift every frame it will see
+    up = pts.copy()
+    win = (up["obsjd"] >= jd0 - 8) & (up["obsjd"] <= jd0 + 8)
+    assert win.sum() >= 2
+    up.loc[win, "log_afrho"] += 0.3
+    r = ac.afrho_at_epoch(up, tr, rh0, jd0, jd0 - 3, jd0 + 3, tp_jd=tp, pad_days=5.0)
+    assert r["method"] == "direct" and r["n"] == int(win.sum())
+    assert abs(r["log_afrho"] - (3.0 - 2.5 * np.log10(rh0) + 0.3)) < 0.05
+    assert "moved to <r_h>" in r["note"]
+
+
+def test_epoch_extrapolation_is_bounded_and_widens_the_error():
+    pts, tr, tp = _epoch_setup()
+    far = pts["obsjd"].min() - 400.0
+    inside = ac.afrho_at_epoch(pts, tr, 2.0, far, tp_jd=tp)
+    rh_max = float(tr["rh_max"].iloc[0])
+    near = ac.afrho_at_epoch(pts, tr, rh_max * 10 ** 0.05, far, tp_jd=tp)   # 0.05 dex beyond
+    assert near["method"] == "trend_extrap" and abs(near["dlog_extrap"] - 0.05) < 1e-6
+    assert near["log_afrho_err"] > inside["log_afrho_err"]
+    gone = ac.afrho_at_epoch(pts, tr, rh_max * 10 ** 0.3, far, tp_jd=tp)    # 0.3 dex beyond
+    assert gone["method"] == "none" and "beyond the ZTF range" in gone["note"]
+    assert np.isnan(gone["afrho_cm"])
+
+
+def test_epoch_on_the_unfitted_leg_gives_nothing():
+    pts, tr, tp = _epoch_setup()
+    r = ac.afrho_at_epoch(pts, tr, 2.0, tp + 100.0, tp_jd=tp)              # outbound, ZTF fitted inbound only
+    assert r["method"] == "none" and r["leg"] == "outbound"
+    assert "fits only the inbound phase" in r["note"]
+
+
+def test_epoch_uses_a_grade_d_law_only_inside_its_data():
+    pts, tr, tp = _epoch_setup()
+    tr = tr.assign(grade="D")
+    far = pts["obsjd"].min() - 400.0
+    assert ac.afrho_at_epoch(pts, tr, 2.0, far, tp_jd=tp)["method"] == "trend"
+    out = ac.afrho_at_epoch(pts, tr, float(tr["rh_max"].iloc[0]) * 10 ** 0.05, far, tp_jd=tp)
+    assert out["method"] == "none" and "unconstrained" in out["note"]
+
+
+def test_epoch_without_frames_or_trends():
+    r = ac.afrho_at_epoch(pd.DataFrame(), pd.DataFrame(), 2.0, 2461000.0)
+    assert r["method"] == "none" and "no clean ZTF" in r["note"]
+
+
+def test_evaluate_trend_error_is_smallest_at_the_data():
+    lr, y, e = _series()
+    f = ac.fit_powerlaw(lr, y, e, n_boot=100)
+    _, e_mid = ac.evaluate_trend(f, f["log_rh_mean"], include_scatter=False)
+    _, e_edge = ac.evaluate_trend(f, lr.max(), include_scatter=False)
+    _, e_sc = ac.evaluate_trend(f, f["log_rh_mean"])
+    assert e_mid < e_edge and e_sc > e_mid

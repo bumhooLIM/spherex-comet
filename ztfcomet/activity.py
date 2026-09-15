@@ -84,8 +84,10 @@ def fit_powerlaw(log_rh, log_afrho, log_err, n_boot=1000, seed=0):
     activity that falls with distance), ``x_err`` (formal),
     ``x_err_scaled``, ``x_boot_lo``/``x_boot_hi`` (16-84%), ``a``
     (log10 Afrho at 1 au) and ``a_err``, ``chi2_red``, ``rms_dex`` (unweighted
-    residual scatter), ``dlog_rh`` (baseline), ``median_log_err``.  All fit
-    fields are NaN with fewer than three points or no baseline.
+    residual scatter), ``dlog_rh`` (baseline), ``median_log_err``,
+    ``log_rh_mean`` (the weighted-mean abscissa) and ``level_err`` (the scaled
+    uncertainty of the law there).  All fit fields are NaN with fewer than
+    three points or no baseline.
     """
     x = np.asarray(log_rh, float)
     y = np.asarray(log_afrho, float)
@@ -96,7 +98,8 @@ def fit_powerlaw(log_rh, log_afrho, log_err, n_boot=1000, seed=0):
     out = dict(n=n, x=np.nan, x_err=np.nan, x_err_scaled=np.nan, x_boot_lo=np.nan,
                x_boot_hi=np.nan, a=np.nan, a_err=np.nan, chi2_red=np.nan, rms_dex=np.nan,
                dlog_rh=float(np.ptp(x)) if n else np.nan,
-               median_log_err=float(np.median(e)) if n else np.nan)
+               median_log_err=float(np.median(e)) if n else np.nan,
+               log_rh_mean=np.nan, level_err=np.nan)
     if n < 3 or out["dlog_rh"] <= 0:
         return out
     w = 1.0 / e ** 2
@@ -107,6 +110,11 @@ def fit_powerlaw(log_rh, log_afrho, log_err, n_boot=1000, seed=0):
     dof = n - 2
     chi2_red = float((w * resid ** 2).sum() / dof) if dof > 0 else np.nan
     scale = np.sqrt(max(chi2_red, 1.0)) if np.isfinite(chi2_red) else 1.0
+    # the level and the slope are uncorrelated at the weighted-mean abscissa;
+    # from there the law can be evaluated anywhere with a two-term variance
+    # (see evaluate_trend), which a_err -- the level at 1 au -- cannot give.
+    xm = float((w * x).sum() / w.sum())
+    level_err = float(scale / np.sqrt(w.sum()))
     rng = np.random.default_rng(seed)
     boots = []
     for _ in range(n_boot):
@@ -119,7 +127,7 @@ def fit_powerlaw(log_rh, log_afrho, log_err, n_boot=1000, seed=0):
     b_lo, b_hi = (np.percentile(boots, [16, 84]) if len(boots) >= 50 else (np.nan, np.nan))
     out.update(x=-b, x_err=b_err, x_err_scaled=b_err * scale, x_boot_lo=-b_hi, x_boot_hi=-b_lo,
                a=a, a_err=a_err * scale, chi2_red=chi2_red,
-               rms_dex=float(np.sqrt(np.mean(resid ** 2))))
+               rms_dex=float(np.sqrt(np.mean(resid ** 2))), log_rh_mean=xm, level_err=level_err)
     return out
 
 
@@ -755,3 +763,232 @@ def analyse(phot, target, tp_jd=None, bands=("r", "g"), rhos=(10000, 20000),
                                     gr_median=float(sub["gr"].median()) if sub["gr"].notna().any() else np.nan, **ct))
     return (pd.DataFrame(trends), pd.DataFrame(peaks), pd.DataFrame(breaks),
             pd.DataFrame(colours), pd.DataFrame(outbursts))
+
+
+# ------------------------------------------------------- value at an epoch
+EPOCH_METHODS = ("direct", "trend", "trend_extrap", "none")
+_PRIMARY_SPLITS = ("peak", "perihelion")
+
+
+def evaluate_trend(row, log_rh0, include_scatter=True):
+    """log Afrho of one fitted power law at *log_rh0*, with its uncertainty.
+
+    ``log Afrho = a - x log r_h`` has its level and slope uncorrelated at the
+    weighted-mean abscissa of the fit, so the variance anywhere else is
+    ``level_err**2 + (log_rh0 - log_rh_mean)**2 * x_err_scaled**2`` -- the
+    scaled errors, since the fits are usually worse than their errors.  With
+    *include_scatter* the RMS of the points about the law is added in
+    quadrature: a comet at one epoch sits that far from its own trend, and
+    the question asked is its brightness then, not the mean law.  Rows fitted
+    before ``log_rh_mean`` existed fall back to ``a_err`` (the level at 1 au)
+    and the slope error with no correlation term, an overestimate.
+
+    Returns ``(log_afrho, log_afrho_err)``, NaN without a fit.
+    """
+    a, x = float(row["a"]), float(row["x"])
+    if not (np.isfinite(a) and np.isfinite(x)):
+        return np.nan, np.nan
+    xm, le = float(row.get("log_rh_mean", np.nan)), float(row.get("level_err", np.nan))
+    xe = float(row.get("x_err_scaled", np.nan))
+    xe = xe if np.isfinite(xe) else 0.0
+    if np.isfinite(xm) and np.isfinite(le):
+        var = le ** 2 + (log_rh0 - xm) ** 2 * xe ** 2
+    else:
+        var = float(row.get("a_err", 0.0)) ** 2 + log_rh0 ** 2 * xe ** 2
+    rms = float(row.get("rms_dex", np.nan))
+    if include_scatter and np.isfinite(rms):
+        var += rms ** 2
+    return float(a - x * log_rh0), float(np.sqrt(var))
+
+
+def _leg_at_epoch(trends, jd0, tp_jd=None, arc=None):
+    """Which fitted phase of the comet the epoch *jd0* belongs to.
+
+    Peak-split comets divide at ``t_peak``; a single-phase comet (one leg
+    fitted, or a maximum at the edge of its coverage) is one phase; a
+    perihelion-split comet divides at T_p, or by the caller's *arc*
+    (``"in"`` / ``"out"``) when T_p is unknown.  Returns the leg name and the
+    primary rows.
+    """
+    prim = trends[trends["primary"].astype(bool) & trends["split"].isin(_PRIMARY_SPLITS)]
+    if prim.empty:
+        return "", prim
+    has_tp = tp_jd is not None and np.isfinite(tp_jd)
+    if (prim["split"] == "peak").any():
+        rows = prim[prim["split"] == "peak"]
+        if set(rows["leg"]) >= {"rising", "fading"} and has_tp:
+            leg = "rising" if (jd0 - tp_jd) < float(rows["t_peak"].iloc[0]) else "fading"
+        else:
+            leg = str(rows["leg"].iloc[0])
+        return leg, rows
+    if has_tp:
+        leg = "inbound" if jd0 < tp_jd else "outbound"
+    elif arc:
+        leg = "inbound" if str(arc).lower().startswith("in") else "outbound"
+    else:
+        leg = str(prim["leg"].iloc[0])
+    return leg, prim
+
+
+def _epoch_rows(trends, leg):
+    """The fitted laws of one leg: its primary row, its segments and its tail."""
+    if not leg or trends is None or len(trends) == 0:
+        return pd.DataFrame()
+    seg_of = trends["segment_of"].fillna("").astype(str) if "segment_of" in trends else pd.Series("", index=trends.index)
+    m = ((trends["primary"].astype(bool) & (trends["leg"] == leg) & trends["split"].isin(_PRIMARY_SPLITS))
+         | (trends["split"].isin(["segment", "tail"]) & (seg_of == leg)))
+    rows = trends[m]
+    return rows[np.isfinite(rows["a"]) & np.isfinite(rows["x"])]
+
+
+def _with_linear(out):
+    y, e = out["log_afrho"], out["log_afrho_err"]
+    if np.isfinite(y):
+        out.update(afrho_cm=float(10 ** y), afrho_err_cm=float(10 ** y * LN10 * e) if np.isfinite(e) else np.nan,
+                   afrho_lo_cm=float(10 ** (y - e)) if np.isfinite(e) else np.nan,
+                   afrho_hi_cm=float(10 ** (y + e)) if np.isfinite(e) else np.nan)
+    else:
+        out.update(afrho_cm=np.nan, afrho_err_cm=np.nan, afrho_lo_cm=np.nan, afrho_hi_cm=np.nan)
+    return out
+
+
+def afrho_at_epoch(pts, trends, rh0, jd0, jd_lo=None, jd_hi=None, tp_jd=None, arc=None,
+                   outbursts=None, pad_days=5.0, min_direct=2, max_extrap_dex=0.10,
+                   extrap_grades=("A", "B", "C"), tol=0.005):
+    """Af-rho of one comet at one observing epoch, from its ZTF series.
+
+    The epoch is a window ``[jd_lo, jd_hi]`` around *jd0* (a SPHEREx phase
+    group, typically days to a month) at mean heliocentric distance *rh0*.
+    Three estimates are tried in order of how much they assume:
+
+    1. ``direct`` -- at least *min_direct* clean frames fall within
+       *pad_days* of the window.  Each frame is moved to *rh0* along the
+       leg's fitted slope (the most local law of grade A-C; otherwise left
+       where it is), and the weighted mean is the value: this is the
+       measurement itself, and a trend is only needed to correct for the
+       r_h the comet covered inside the window.  The error is the scaled
+       error of the mean plus the slope's contribution; ``rms_dex`` is the
+       scatter of the frames.
+    2. ``trend`` -- no frames then, but *rh0* lies inside a fitted law of the
+       phase the epoch falls in (:func:`_leg_at_epoch`): the most local one
+       among the primary law, its segments and its tail, evaluated with
+       :func:`evaluate_trend`, scatter included.  Inside the data any grade
+       serves -- the level of a flat, well-sampled series is measured even
+       where its slope is not.
+    3. ``trend_extrap`` -- *rh0* is beyond the primary law's r_h range by at
+       most *max_extrap_dex* and the law is at least grade C (an
+       unconstrained slope cannot be extended).  ``dlog_extrap`` records
+       how far.
+
+    Otherwise ``none``, and ``note`` says why: no ZTF frames at this
+    aperture, ZTF fitted only the other phase of the orbit, no trend at
+    all, or *rh0* too far outside the fitted range.  A single frame inside
+    the window is used only when no trend can be evaluated, with an error
+    floor of 0.1 dex.
+
+    Parameters
+    ----------
+    pts : pandas.DataFrame
+        Clean frames of one band and aperture from :func:`select_points`.
+    trends : pandas.DataFrame
+        The trend rows of the same comet, band and aperture.
+    outbursts : pandas.DataFrame, optional
+        Outburst windows (``jd_start``, ``jd_end``) of the same series, to
+        count the frames of the window that lie in one.
+
+    Returns
+    -------
+    dict
+        ``method``, ``leg``, ``log_afrho``, ``log_afrho_err``, ``afrho_cm``,
+        ``afrho_err_cm``, ``afrho_lo_cm``, ``afrho_hi_cm`` (the 1-sigma range
+        in linear units), ``n`` (frames or fit points used), ``n_window``,
+        ``n_outburst_window``, ``grade`` (of the law used), ``rms_dex``,
+        ``dlog_extrap``, ``note``.
+    """
+    log_rh0 = float(np.log10(rh0))
+    out = dict(method="none", leg="", log_afrho=np.nan, log_afrho_err=np.nan, n=0, n_window=0,
+               n_outburst_window=0, grade="", rms_dex=np.nan, dlog_extrap=0.0, note="")
+    if pts is None or len(pts) == 0:
+        out["note"] = "no clean ZTF r-band frames at this aperture"
+        return _with_linear(out)
+    jd_lo = jd0 if jd_lo is None else jd_lo
+    jd_hi = jd0 if jd_hi is None else jd_hi
+    win = pts[(pts["obsjd"] >= jd_lo - pad_days) & (pts["obsjd"] <= jd_hi + pad_days)]
+    out["n_window"] = int(len(win))
+    if outbursts is not None and len(outbursts) and len(win):
+        m = np.zeros(len(win), bool)
+        for _, w in outbursts.iterrows():
+            m |= ((win["obsjd"] >= w["jd_start"]) & (win["obsjd"] <= w["jd_end"])).to_numpy()
+        out["n_outburst_window"] = int(m.sum())
+    have_trends = trends is not None and len(trends) > 0
+    leg, prim = _leg_at_epoch(trends, jd0, tp_jd, arc) if have_trends else ("", pd.DataFrame())
+    out["leg"] = leg
+    rows = _epoch_rows(trends, leg) if have_trends else pd.DataFrame()
+    primary = rows[rows["split"].isin(_PRIMARY_SPLITS)] if len(rows) else rows
+    primary = primary.iloc[0] if len(primary) else None
+    inside = rows[(rows["rh_min"] * (1 - tol) <= rh0) & (rh0 <= rows["rh_max"] * (1 + tol))] if len(rows) else rows
+    local = inside.iloc[int(np.argmin(np.log10(inside["rh_max"] / inside["rh_min"])))] if len(inside) else None
+
+    # 1. the frames inside the window
+    if len(win) >= min_direct:
+        src = local if local is not None and local["grade"] in extrap_grades else \
+            (primary if primary is not None and primary["grade"] in extrap_grades else None)
+        slope = float(src["x"]) if src is not None else 0.0
+        slope_err = float(src["x_err_scaled"]) if src is not None else 0.0
+        d = win["log_rh"].to_numpy(float) - log_rh0
+        y = win["log_afrho"].to_numpy(float) + slope * d
+        e = win["log_afrho_err"].to_numpy(float)
+        w = 1.0 / e ** 2
+        W = w.sum()
+        ym = float((w * y).sum() / W)
+        chi2_red = float((w * (y - ym) ** 2).sum() / (len(y) - 1)) if len(y) > 1 else np.nan
+        scale = float(np.sqrt(max(chi2_red, 1.0))) if np.isfinite(chi2_red) else 1.0
+        dm = float((w * d).sum() / W)
+        err = float(np.sqrt(scale ** 2 / W + (dm * slope_err) ** 2))
+        note = f"{len(y)} ZTF frames within {pad_days:g} d of the window"
+        if src is not None:
+            note += f", moved to <r_h> along x = {slope:.2f} ({src['leg']}, grade {src['grade']})"
+        if out["n_outburst_window"]:
+            note += f"; {out['n_outburst_window']} of them in an outburst"
+        out.update(method="direct", log_afrho=ym, log_afrho_err=err, n=int(len(y)),
+                   rms_dex=float(np.std(y - ym)) if len(y) > 1 else np.nan,
+                   grade=str(src["grade"]) if src is not None else "", note=note)
+        return _with_linear(out)
+
+    def _single_or(note):
+        if len(win) == 1:
+            f = win.iloc[0]
+            out.update(method="direct", log_afrho=float(f["log_afrho"]), n=1,
+                       log_afrho_err=float(np.hypot(f["log_afrho_err"], 0.1)),
+                       note=f"single ZTF frame within {pad_days:g} d of the window ({note})")
+        else:
+            out["note"] = note
+        return _with_linear(out)
+
+    # 2. the fitted law the epoch falls in
+    if primary is None:
+        if not have_trends or prim.empty:
+            return _single_or("no fitted ZTF trend at this aperture")
+        fitted = "/".join(sorted(set(prim["leg"])))
+        return _single_or(f"ZTF fits only the {fitted} phase; the SPHEREx epoch is {leg}")
+    if local is not None:
+        y, e = evaluate_trend(local, log_rh0)
+        out.update(method="trend", log_afrho=y, log_afrho_err=e, n=int(local["n"]), grade=str(local["grade"]),
+                   rms_dex=float(local["rms_dex"]),
+                   note=f"{local['leg']} law (n = {int(local['n'])}, grade {local['grade']}) at <r_h>")
+        return _with_linear(out)
+    # 3. a bounded extrapolation of the primary law
+    lo, hi = np.log10(float(primary["rh_min"])), np.log10(float(primary["rh_max"]))
+    below = log_rh0 < lo
+    dlog = float(lo - log_rh0) if below else float(log_rh0 - hi)
+    out["dlog_extrap"] = dlog
+    rng = f"{primary['rh_min']:.2f}-{primary['rh_max']:.2f} au"
+    if primary["grade"] in extrap_grades and dlog <= max_extrap_dex:
+        y, e = evaluate_trend(primary, log_rh0)
+        out.update(method="trend_extrap", log_afrho=y, log_afrho_err=e, n=int(primary["n"]),
+                   grade=str(primary["grade"]), rms_dex=float(primary["rms_dex"]),
+                   note=f"{leg} law extrapolated {dlog:.2f} dex {'inward' if below else 'outward'} of its range {rng}")
+        return _with_linear(out)
+    if primary["grade"] not in extrap_grades:
+        return _single_or(f"{leg} law is unconstrained (grade {primary['grade']}) and <r_h> = {rh0:.2f} au is outside its range {rng}")
+    return _single_or(f"<r_h> = {rh0:.2f} au is {dlog:.2f} dex beyond the ZTF range {rng} (limit {max_extrap_dex:g})")

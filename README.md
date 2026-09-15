@@ -88,6 +88,11 @@ ztfcomet/            the package
 
 notebooks/
 ├── main.py          end-to-end driver, single or multiple targets
+├── survey.py        unattended multi-target batch, resumable
+├── afrho_trends.py  heliocentric Afρ trends per comet, peaks, breaks, outbursts, colour;
+│                    the Afρ at every SPHEREx phase (results/afrho/, fig/afrho/trend/)
+├── afrho_trends_report.py   rebuilds the tables of doc/afrho_heliocentric_trends.md
+├── spherex_windows.py       when SPHEREx observed each comet, per phase group
 ├── query.ipynb      validate the query stage (test target 24P)
 ├── afrho.ipynb      validate the photometry stage (test target 24P)
 ├── figure.ipynb     the core figures
@@ -160,6 +165,20 @@ A(0°)f\rho = Af\rho\cdot 10^{0.4\beta\alpha}$$
 Solar magnitudes are PS1 AB (Willmer 2018), matching ZTF's calibration.
 
 > Afρ is aperture-dependent by construction. Always quote `rho_km` with a value.
+
+**Heliocentric trends and the SPHEREx epochs** — `notebooks/afrho_trends.py`
+fits `Afρ = A r_h^-x` per orbital phase, aperture and band, finds peaks,
+breaks and outbursts (`ztfcomet.activity`; the note is
+`doc/afrho_heliocentric_trends.md`), and estimates for every SPHEREx phase
+group of a comet the Afρ at the group's mean r_h
+(`activity.afrho_at_epoch`): the clean frames inside the window when ZTF
+observed then, otherwise the fitted law of the phase the epoch falls in,
+otherwise a bounded extrapolation, otherwise nothing with the reason.  The
+table is `results/afrho/spherex_afrho.csv`; the trend figures
+(`fig/afrho/trend/`) mark those values in red, and `fig/afrho/trend_slide/`
+holds one compact figure per SPHEREx phase (the r_h panels and the table,
+that phase highlighted) for the catalog's review deck.  The SPHEREx catalog
+attaches the values to its summaries with its `scripts/attach_afrho_ztf.py`.
 
 ---
 

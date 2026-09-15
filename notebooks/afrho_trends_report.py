@@ -32,6 +32,73 @@ def cell(s):
     return f"**{core} {r['grade']}**" if r["grade"] in "AB" else f"{core} {r['grade']}"
 
 
+def _num(v, sig=3):
+    """*sig* significant figures without an exponent."""
+    if not np.isfinite(v):
+        return "—"
+    if v == 0:
+        return "0"
+    d = max(0, sig - 1 - int(np.floor(np.log10(abs(v)))))
+    return f"{v:,.{d}f}"
+
+
+def _reason(note):
+    """The note of a phase without an estimate, reduced to its kind."""
+    if "no clean ZTF" in note:
+        return "no clean ZTF r-band frames at this aperture"
+    if "fits only the" in note:
+        return "ZTF fitted only the other phase of the orbit"
+    if "no fitted ZTF trend" in note:
+        return "no fitted trend at this aperture"
+    if "unconstrained" in note:
+        return "the law is grade D and ⟨r_h⟩ lies outside its data"
+    if "beyond the ZTF range" in note:
+        return "⟨r_h⟩ more than 0.1 dex beyond the fitted range"
+    return note
+
+
+def spherex_section(sx):
+    """Census of the Afρ estimates at the SPHEREx epochs, then one line per phase."""
+    out = ["\n### Afρ at the SPHEREx epochs\n",
+           "Per SPHEREx phase group, the ZTF r-band A(0°)fρ at the group's mean r_h (`spherex_afrho.csv`; "
+           "`activity.afrho_at_epoch`).  `direct`: clean frames within 5 d of the window, moved to ⟨r_h⟩ along the "
+           "local law and averaged; `trend`: the fitted law of the orbital phase the epoch falls in, at ⟨r_h⟩; "
+           "`trend_extrap`: that law extended by at most 0.1 dex; `none`: no estimate, with the reason.  Errors are "
+           "1σ in log space (the scatter about the law included for `trend`); the linear error quoted is the "
+           "symmetric approximation, the 1σ range is in the table.\n",
+           "| ρ (km) | phases | direct | trend | trend_extrap | none | with a value |\n|---|---|---|---|---|---|---|"]
+    for rho, g in sx.groupby("rho_km"):
+        c = g["method"].value_counts()
+        out.append(f"| {int(rho) // 1000}k | {len(g)} | {c.get('direct', 0)} | {c.get('trend', 0)} | "
+                   f"{c.get('trend_extrap', 0)} | {c.get('none', 0)} | {int(np.isfinite(g['afrho_cm']).sum())} |")
+    none = sx[sx["method"] == "none"].assign(reason=lambda d: d["note"].map(_reason))
+    if len(none):
+        out.append("\nWhy there is no estimate:\n")
+        out.append("| reason | 10,000 km | 20,000 km |\n|---|---|---|")
+        tab = none.groupby(["reason", "rho_km"]).size().unstack(fill_value=0)
+        for reason, r in tab.sort_values(10000 if 10000 in tab else tab.columns[0], ascending=False).iterrows():
+            out.append(f"| {reason} | {r.get(10000, 0)} | {r.get(20000, 0)} |")
+    out.append("\nPer phase (value ± error in cm, then how: method, points, grade of the law used):\n")
+    out.append("| comet | phase | ⟨r_h⟩ (au) | T−T_p (d) | 10,000 km | how | 20,000 km | how |\n|---|---|---|---|---|---|---|---|")
+    by = {rho: sx[sx["rho_km"] == rho].set_index(["target", "phase"]) for rho in (10000, 20000)}
+
+    def cell(rho, key):
+        if key not in by[rho].index:
+            return "—", ""
+        r = by[rho].loc[key]
+        if np.isfinite(r["afrho_cm"]):
+            g = f" {r['grade']}" if isinstance(r["grade"], str) and r["grade"] else ""
+            return f"{_num(r['afrho_cm'])} ± {_num(r['afrho_err_cm'], 2)}", f"{r['method']} ({int(r['n'])}){g}"
+        return "—", _reason(str(r["note"]))
+
+    for key in sorted(set(by[10000].index) | set(by[20000].index), key=lambda k: (k[0], k[1])):
+        r = by[10000].loc[key] if key in by[10000].index else by[20000].loc[key]
+        t = f"{r['t_tp']:+.0f}" if np.isfinite(r["t_tp"]) else "—"
+        v1, h1 = cell(10000, key); v2, h2 = cell(20000, key)
+        out.append(f"| {key[0]} | S{key[1]} | {r['rh']:.2f} | {t} | {v1} | {h1} | {v2} | {h2} |")
+    return out
+
+
 def leg_order(l):
     for i, k in enumerate(("rising", "fading", "inbound", "outbound")):
         if l.startswith(k):
@@ -44,6 +111,7 @@ def build():
     t = pd.read_csv(R / "trends.csv", dtype=S); p = pd.read_csv(R / "peaks.csv", dtype=S)
     b = pd.read_csv(R / "breaks.csv", dtype=S); c = pd.read_csv(R / "colour.csv", dtype=S)
     o = pd.read_csv(R / "outbursts.csv", dtype=S); w = pd.read_csv(R / "spherex_windows.csv", dtype=S)
+    sx = pd.read_csv(R / "spherex_afrho.csv", dtype=S) if (R / "spherex_afrho.csv").exists() else pd.DataFrame()
     pr = t[t["primary"] & (t["band"] == "r")]
     out = []
     ab = pr[pr["grade"].isin(["A", "B"]) & pr["split"].isin(["peak", "perihelion"])]
@@ -108,6 +176,8 @@ def build():
         for leg in sorted(s["leg"].unique(), key=leg_order):
             out.append(f"| {tg} | {s['rh_min'].min():.2f}–{s['rh_max'].max():.2f} | {leg} | "
                        f"{cell(s[(s['rho_km'] == 10000) & (s['leg'] == leg)])} | {cell(s[(s['rho_km'] == 20000) & (s['leg'] == leg)])} |")
+    if len(sx):
+        out += spherex_section(sx)
     return "\n".join(out) + "\n"
 
 
