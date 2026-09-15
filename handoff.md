@@ -13,15 +13,14 @@ history via tag `spherex-comspec-import`; apphot added).  Verified: `pytest test
 455 245 rows).  ZTF: 56 comets with photometry, Afρ trends, Afρ at 165 SPHEREx phases
 (`results/ztf/afrho/spherex_afrho.csv`, values for 116 / 120 at 10k / 20k) attached as `afrho_*`
 to `gas_fit.csv` (89 / 95 of 147 phases).  Deck `doc/figures.pptx` (2026-09-14).
-Deleted on 2026-09-15: the stale 7.6 GB cutout PNGs, the duplicate `data/apphot`, the archived
-old photometry, obsolete notebooks; `fig/apphot/<T>/` summaries still date from 2026-09-07.
-Pre-merge backup of code/docs: `../_backup_pre-merge_2026-09-15.tar.gz`.  **16 literature PDFs
-are missing** (a git history rewrite emptied `doc/literature/`): restore them from Google
-Drive's Trash; `doc/literature/README.md` lists them (2 already recovered).
+Deleted on 2026-09-15: stale 7.6 GB cutout PNGs, the duplicate `data/apphot`, the archived old
+photometry, obsolete notebooks (`fig/apphot/<T>/` summaries still date from 2026-09-07); backup
+`../_backup_pre-merge_2026-09-15.tar.gz`.  **16 literature PDFs are missing** (a history rewrite
+emptied `doc/literature/`): restore from Google Drive's Trash — `doc/literature/README.md`.
 
 ## Next Steps
-1. `python scripts/apphot/make_figures.py --target-list data/reference/sx_comet_list_ver2607.xlsx --workers 6 --no-cutouts`
-   to refresh `fig/apphot/` for the current photometry; then `scripts/comspec/make_figure_slides.py`.
+1. `scripts/apphot/make_figures.py --target-list data/reference/sx_comet_list_ver2607.xlsx --workers 6 --no-cutouts`
+   refreshes `fig/apphot/` for the current photometry; then `scripts/comspec/make_figure_slides.py`.
 2. `pip install -e .` and `pytest tests/ -q` once in the `spherex` env; add a remote for the
    monorepo and retire the two old repos (nothing was pushed by the merge).
 3. Placeholder 1: the SPHEREx LSF / band shape for the bright comets (χ²_ν 10²–10³ at 20 000 km).
