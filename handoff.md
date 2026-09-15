@@ -39,6 +39,8 @@ revised groups); the before/after report is `notebooks/comspec/case_revision_rep
   → `afrho_trends.py --targets …` (a partial run does not rebuild the windows) → `attach_afrho_ztf.py`;
   stale figure files of vanished phases (240P ph4) must be deleted by hand.
 - `phase_images.py` embeds Q and Afρ in its header text: regenerate it after the attach step.
+- **The deck builder's figure cache must be keyed on the source directory**: keyed on the file
+  name it served the previous snapshot's cropped figures on the revised slides (fixed 2026-09-16).
 - **Emission files are keyed on (target, aperture)**; `arc` in `phase_map.csv` is an arc index.
 - Isolated comspec runs set `COMSPEC_{APPHOT,DATA,RESULT,FIG}_DIR` before import; band windows
   are module constants to monkeypatch (`notebooks/comspec/method_matrix.py`).

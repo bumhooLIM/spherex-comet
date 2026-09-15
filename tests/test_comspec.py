@@ -559,3 +559,25 @@ def test_case_revision_registry_is_consistent():
     assert revision_for("2019 U5", 2).band("2.7um").exclude_top_blue == 2
     assert revision_for("47P", 1) is None and revision_for("47P", 1, enabled=False) is None   # memo-only entry
     assert revision_for("2P", 1, enabled=False) is None
+
+
+def test_slide_figure_cache_keys_on_the_source_directory(tmp_path):
+    """The deck builder crops and re-encodes figures into a cache; two figure sets with the
+    same file names (the current one and a previous snapshot) must not share entries."""
+    import importlib.util
+    from PIL import Image
+    spec = importlib.util.spec_from_file_location(
+        "make_figure_slides", Path(__file__).resolve().parents[1] / "scripts" / "comspec" / "make_figure_slides.py")
+    try:
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+    except ImportError:
+        return                                        # python-pptx not installed
+    a, b, cache = tmp_path / "current", tmp_path / "previous", tmp_path / "cache"
+    for d, colour in ((a, (255, 0, 0)), (b, (0, 0, 255))):
+        d.mkdir()
+        Image.new("RGB", (40, 30), colour).save(d / "T_2e4km_ph1.png")
+    cache.mkdir()
+    ja, jb = mod.as_jpeg(a / "T_2e4km_ph1.png", cache), mod.as_jpeg(b / "T_2e4km_ph1.png", cache)
+    assert ja != jb and Image.open(ja).getpixel((5, 5))[0] > 200 and Image.open(jb).getpixel((5, 5))[2] > 200
+    assert mod._cache_name(a / "x.png") != mod._cache_name(b / "x.png")

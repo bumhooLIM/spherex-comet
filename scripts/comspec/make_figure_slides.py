@@ -40,6 +40,7 @@ Usage
 """
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import sys
@@ -221,6 +222,15 @@ def _blocks(ink: np.ndarray, upto: int) -> list[tuple[int, int]]:
     return out
 
 
+def _cache_name(path: Path, suffix: str | None = None) -> str:
+    """Cache file name of *path*: its name prefixed by a digest of its directory, so the
+    same stem from two figure sets (the current one and a previous snapshot) never collides
+    -- the previous-state slides are built first, and a name-only key made the revised slides
+    reuse their cropped copies."""
+    tag = hashlib.md5(str(path.resolve().parent).encode()).hexdigest()[:8]
+    return f"{tag}_{path.stem}{suffix if suffix is not None else path.suffix}"
+
+
 def strip_header(path: Path, n_lines: int, cache: Path) -> Path:
     """
     Drop the ``n_lines`` figure-level header lines, which repeat the slide header.
@@ -236,7 +246,7 @@ def strip_header(path: Path, n_lines: int, cache: Path) -> Path:
     """
     if n_lines <= 0:
         return path
-    out = cache / path.name
+    out = cache / _cache_name(path)
     if out.exists():
         return out
     img = Image.open(path)
@@ -254,7 +264,7 @@ def strip_header(path: Path, n_lines: int, cache: Path) -> Path:
 
 def as_jpeg(path: Path, cache: Path, quality: int = 88) -> Path:
     """A JPEG copy of a raster-heavy PNG (stacked images compress poorly as PNG)."""
-    out = cache / (path.stem + ".jpg")
+    out = cache / _cache_name(path, ".jpg")
     if not out.exists():
         Image.open(path).convert("RGB").save(out, "JPEG", quality=quality, optimize=True)
     return out
