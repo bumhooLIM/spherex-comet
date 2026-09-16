@@ -110,9 +110,10 @@ Fixed bugs with regression tests; changing them silently corrupts results.
   `doc/ztf/afrho_heliocentric_trends.md`, `doc/apphot/pipeline_upgrade_notes.md`) and into
   `results/comspec/placeholders.csv` / `config.PLACEHOLDERS`; `doc/summary.md` is refreshed
   when the headline numbers move.
-- **Git:** one repository at the root (histories of `ztfcomet` and `spherex-comspec` merged;
-  the comspec history is reachable through the tag `spherex-comspec-import`).  Commit at
-  breakpoints with a message that says *why*; never push without being asked.
+- **Git:** one repository at the root, remote `bumhooLIM/spherex-comet`; the history was
+  restarted on 2026-09-16 (the earlier merged `ztfcomet` / `spherex-comspec` history, tag
+  `spherex-comspec-import` included, is archived in the local backup named in `handoff.md`).
+  Commit at breakpoints with a message that says *why*; never push without being asked.
 
 ## Literature Review & Manuscript Writing
 - **Data extraction:** when parsing PDFs or text in `doc/`, extract methodology, spectral

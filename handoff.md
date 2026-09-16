@@ -1,5 +1,5 @@
 # Handoff — `spherex-comet`
-_2026-09-16: the review memo of 2026-09-15 applied case by case (`doc/comspec/case_revisions.md`); gas fits, Afρ epochs, figures and the deck reproduced._
+_2026-09-16: the review memo of 2026-09-15 applied case by case (`doc/comspec/case_revisions.md`); gas fits, Afρ epochs, figures and the deck reproduced.  Git history restarted the same day: the old 80-commit history is archived at `~/Desktop/claude/spherex-comet-git-history-backup-2026-09-16` (the former `.git`; `git clone` it to browse) and, as of 2026-09-16, still on GitHub `bumhooLIM/spherex-comet`._
 ## Current State
 **Main result:** `results/comspec/gas_fit.csv` — 147 fits over 68 comets (run `5741d6611f60`,
 `spherex_comspec` 1.3.0): robust ≥ 3σ (n_eff ≥ 2) H₂O 18 / CO₂ 28 / CO 4 phases → 37 comets
