@@ -24,6 +24,10 @@ a validated run; strip them before committing (`nbstripout`).
 | `build_db_filtered.ipynb` | data preparation: `db.parq` → `db_filtered.parq` (V < 22, r_h < 20 au, WCS attached); run once per data release |
 
 ## `comspec/`
+| notebook | purpose |
+|---|---|
+| `figures.ipynb` | the catalog figures from `results/comspec/gas_fit.csv`: Q vs ⟨r_h⟩ per species with the 3σ limits, the comets with a value at ≥ 2 phases (tracks labelled by designation), and Q / A(0°)fρ vs ⟨r_h⟩ at ρ = 10 000 and 20 000 km → `fig/comspec/Q_*.png` |
+
 Standalone study scripts of the catalog stage (run from the project root):
 `method_matrix.py` (the 54-run continuum/fit method matrix in isolated result trees),
 `apphot_comparison.py` / `_figures.py` / `_summary.py` (previous vs revised photometry —

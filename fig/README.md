@@ -9,7 +9,8 @@ batch.
 `cont_subtract/<stem>_validation.png` and `_raw.png` per group and band;
 `phase_group/<comet>_phase_group.png` the epoch → phase cuts; `phase_images/<stem>.png` the
 stacked ZTF and SPHEREx images per fitted phase (`phase_images.py`); `summary_Q_vs_rhel.png`,
-`summary_mixing_ratios.png`; `fluorescence_profiles.png` (the g-factor database);
+`summary_mixing_ratios.png`; `Q_vs_rh.png`, `Q_vs_rh_multi_epoch.png`, `Q_over_afrho_vs_rh.png`
+(`notebooks/comspec/figures.ipynb`); `fluorescence_profiles.png` (the g-factor database);
 `studies/` the cross-variant figures (`flag_policy_comparison.png`, `distcorr_effect.png`),
 `studies/<variant>/` per-group figures of a study variant (`--study-figs`),
 `studies/apphot_comparison/`.  `<stem> = <comet>_<aperture>km_ph<phase>`.

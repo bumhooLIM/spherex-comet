@@ -19,6 +19,8 @@ grade-D extrapolation, 210P S1–S4 from the outbound law, 217P S1 without outbu
 `dc_main_norev` (role `rules`) is the rule-only run and reproduces the 2026-09-14 census exactly.
 Snapshots for the comparison: `fig/comspec/previous_rev260915/` (figures + `gas_fit.csv` of the
 revised groups); the before/after report is `notebooks/comspec/case_revision_report.py BEFORE_DIR`.
+`notebooks/comspec/figures.ipynb` (2026-09-16): Q vs ⟨r_h⟩ with the 3σ limits, the ≥ 2-phase comets as
+labelled tracks, Q / A(0°)fρ at 10k / 20k → `fig/comspec/Q_*.png`; paths via `spherex_comspec.directory`.
 
 ## Next Steps
 1. Review the deck pairs and `case_revisions.md` §4 (waived negative continua are upper bounds;
