@@ -1,0 +1,261 @@
+"""Single source of truth for every path used by :mod:`ztfcomet`.
+
+Nothing else in the project may hardcode a path or derive one from
+``Path.cwd()``.  Notebooks that did so (``WORKDIR = Path.cwd() / ".."``) broke
+whenever they were executed from anywhere but ``notebooks/``; this module
+locates the project by walking up for the ``pyproject.toml`` marker instead, so
+imports behave identically from a notebook, a script, or a test.
+
+Raw FITS live on an external SSD, not in the repository.  ``DATA_ROOT``
+therefore resolves in this order:
+
+1. ``$ZTFCOMET_DATA`` if set — explicit override, always wins.
+2. The SSD path in :data:`SSD_DATA_ROOT` if that volume is mounted.
+3. ``<project>/data/ztf`` — the fallback, so a fresh clone works with no SSD.
+
+The ZTF stage is one of three in the ``spherex-comet`` project, so its outputs
+are namespaced: ``results/ztf/``, ``fig/ztf/``, ``doc/ztf/``.  The SPHEREx
+stages live in the same tree (``SPHEREX_ROOT`` is the project root).
+
+Layout under each root is ``<root>/<target_slug>/``, matching what is already
+on the SSD.
+
+Examples
+--------
+>>> from ztfcomet import directory as d
+>>> d.data_dir("24P")            # doctest: +SKIP
+PosixPath('/Volumes/T7/data/ztf-comet/24P')
+>>> d.target_slug("2019 Y3")
+'2019Y3'
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+import time
+from pathlib import Path
+
+log = logging.getLogger(__name__)
+
+__all__ = [
+    "using_fallback_root",
+    "PROJECT_ROOT", "DATA_ROOT", "RESULT_ROOT", "FIG_ROOT", "DOC_ROOT",
+    "SSD_DATA_ROOT", "GAIA_ROOT", "SPHEREX_ROOT", "SPHEREX_APPHOT_DIR", "SPHEREX_PHASE_CSV",
+    "SPHEREX_COMSPEC_RESULT_DIR", "TARGET_LIST", "target_slug", "data_dir", "result_dir",
+    "fig_dir", "describe",
+]
+
+#: Where raw FITS live when the external SSD is mounted.
+SSD_DATA_ROOT = Path("/Volumes/T7/data/ztf-comet")
+
+#: Default home of the local Gaia DR3 catalogue used for contamination
+#: flagging.  Override with ``$ZTFCOMET_GAIA``.  Holds ``gaiadr3_all.npy`` and,
+#: ideally, the ``gaiadr3_deccache/`` fast path.
+DEFAULT_GAIA_ROOT = Path.home() / "Desktop" / "data" / "gaia_dr3"
+#: The SPHEREx stages of the same project: ``results/apphot/photometry/`` and
+#: ``data/comspec/phase_assignment.csv`` say when SPHEREx observed each comet,
+#: ``results/comspec/`` holds the production rates.  Before the merge this was
+#: the sibling ``spherex-comet-catalog`` checkout; override with ``$ZTFCOMET_SPHEREX``.
+
+_MARKER = "pyproject.toml"
+
+
+def _find_project_root(start: Path | None = None) -> Path:
+    """Walk up from *start* until the directory containing ``pyproject.toml``.
+
+    Falls back to the package's own parent so that an un-installed, un-marked
+    checkout still resolves to something sensible rather than raising.
+    """
+    start = (start or Path(__file__)).resolve()
+    for candidate in (start, *start.parents):
+        if (candidate / _MARKER).is_file():
+            return candidate
+    return Path(__file__).resolve().parent.parent
+
+
+PROJECT_ROOT: Path = _find_project_root()
+
+
+def _probe(path: Path, attempts: int = 3, delay: float = 1.0) -> bool:
+    """Is *path* a readable directory, retrying a sleeping external volume?
+
+    An external SSD that has spun down can fail its first ``is_dir()`` and
+    answer normally a second later.  Taking the first answer as final sent a
+    resumed survey run to the local fallback, where it found no status file and
+    silently restarted the whole thing in the wrong place.
+    """
+    for attempt in range(attempts):
+        try:
+            if path.is_dir():
+                return True
+        except OSError:
+            pass
+        if attempt < attempts - 1:
+            time.sleep(delay)
+    return False
+
+
+def _resolve_data_root() -> Path:
+    env = os.environ.get("ZTFCOMET_DATA")
+    if env:
+        return Path(env).expanduser()
+    if _probe(SSD_DATA_ROOT):
+        return SSD_DATA_ROOT
+    log.warning("SSD data root %s is not available; falling back to %s",
+                SSD_DATA_ROOT, PROJECT_ROOT / "data" / "ztf")
+    return PROJECT_ROOT / "data" / "ztf"
+
+
+#: Raw FITS cutouts, ``eph.csv``, ``ztf.csv``, ``fits_urls.txt``.  Large; never committed.
+DATA_ROOT: Path = _resolve_data_root()
+
+#: Root of the SPHEREx stages (apphot photometry, comspec production rates).
+#: The same project since the merge of 2026-09-15.
+SPHEREX_ROOT: Path = Path(os.environ.get("ZTFCOMET_SPHEREX", str(PROJECT_ROOT))).expanduser()
+#: SPHEREx aperture photometry (one CSV per comet) and the per-exposure phase labels.
+SPHEREX_APPHOT_DIR: Path = SPHEREX_ROOT / "results" / "apphot" / "photometry"
+SPHEREX_PHASE_CSV: Path = SPHEREX_ROOT / "data" / "comspec" / "phase_assignment.csv"
+SPHEREX_COMSPEC_RESULT_DIR: Path = SPHEREX_ROOT / "results" / "comspec"
+
+#: Photometry tables and other clean, small outputs (``results/ztf/``).  Never committed.
+RESULT_ROOT: Path = PROJECT_ROOT / "results" / "ztf"
+
+#: Figures (``fig/ztf/``).  Never committed.
+FIG_ROOT: Path = PROJECT_ROOT / "fig" / "ztf"
+
+#: Technical notes of the ZTF stage (``doc/ztf/``).  Committed.
+DOC_ROOT: Path = PROJECT_ROOT / "doc" / "ztf"
+
+#: The 68-comet working list shared by the three stages.
+TARGET_LIST: Path = PROJECT_ROOT / "data" / "reference" / "sx_comet_list_ver2607.xlsx"
+
+
+def _resolve_gaia_root() -> Path:
+    env = os.environ.get("ZTFCOMET_GAIA")
+    return Path(env).expanduser() if env else DEFAULT_GAIA_ROOT
+
+
+#: Local Gaia DR3 catalogue.  Large and read-only; never inside the repository.
+GAIA_ROOT: Path = _resolve_gaia_root()
+
+
+def target_slug(targetname: str) -> str:
+    """Filesystem-safe directory name for a target designation.
+
+    Strips whitespace and replaces path separators, so ``"2019 Y3"`` and
+    ``"C/2024 E1"`` become ``"2019Y3"`` and ``"C2024E1"``.  Matches the naming
+    already used on the SSD.
+    """
+    slug = "".join(str(targetname).split())
+    return slug.replace("/", "").replace("\\", "")
+
+
+def _sub(root: Path, targetname: str | None, create: bool) -> Path:
+    path = root if targetname is None else root / target_slug(targetname)
+    if create:
+        path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def data_dir(targetname: str | None = None, create: bool = True) -> Path:
+    """Directory holding raw FITS and query products for *targetname*."""
+    return _sub(DATA_ROOT, targetname, create)
+
+
+SUBJECTS = ("photometry", "profile", "afrho")
+
+
+def _subject(subject: str) -> str:
+    if subject not in SUBJECTS:
+        raise ValueError(
+            f"unknown output subject {subject!r}: results and figures are organised by "
+            f"subject {SUBJECTS}, not by target.  Use result_path()/fig_path() with "
+            "targetname= for a per-target file, or fig_dir(subject, targetname) for bulk images.")
+    return subject
+
+
+def result_dir(subject: str, create: bool = True) -> Path:
+    """``results/<subject>/`` -- outputs are grouped by subject, not by target.
+
+    A target name here is an error on purpose.  The tree used to be
+    per-target, and a stale call site should fail rather than quietly rebuild
+    that layout beside the new one.
+    """
+    return _sub(RESULT_ROOT / _subject(subject), None, create)
+
+
+def fig_dir(subject: str, targetname: str | None = None, create: bool = True,
+            kind: str | None = None) -> Path:
+    """``fig/<subject>/``, ``fig/<subject>/<kind>/``, or with a target the
+    per-target directory under either, for bulk per-frame images."""
+    root = FIG_ROOT / _subject(subject)
+    if kind:
+        root = root / kind
+    return _sub(root, targetname, create)
+
+
+def fig_kind_path(subject: str, kind: str, targetname: str, ext: str = "png",
+                  create: bool = True) -> Path:
+    """``fig/<subject>/<kind>/<target>.<ext>`` -- one figure type per directory.
+
+    The per-target figures of a subject are kept apart by *kind* (for afrho:
+    ``rh``, ``apertures``, ``trend``, ``lightcurve``, ``colour``) so that
+    scrolling one directory shows one figure type across all comets.
+    """
+    return fig_dir(subject, None, create, kind=kind) / f"{target_slug(targetname)}.{ext}"
+
+
+def result_path(subject: str, filename: str, targetname: str | None = None,
+                create: bool = True) -> Path:
+    """``results/<subject>/<target>_<filename>``, or ``<filename>`` for a survey-level table."""
+    name = f"{target_slug(targetname)}_{filename}" if targetname else filename
+    return result_dir(subject, create) / name
+
+
+def fig_path(subject: str, filename: str, targetname: str | None = None,
+             create: bool = True) -> Path:
+    """``fig/<subject>/<target>_<filename>``, or ``<filename>`` for a survey-level figure."""
+    name = f"{target_slug(targetname)}_{filename}" if targetname else filename
+    return fig_dir(subject, None, create) / name
+
+
+def photometry_path(targetname: str, create: bool = True) -> Path:
+    """``results/ztf/photometry/<target>.csv`` -- the one table everything downstream reads."""
+    return result_dir("photometry", create) / f"{target_slug(targetname)}.csv"
+
+
+def profile_paths(targetname: str, create: bool = True) -> dict:
+    """The three profile tables of a target, keyed ``profile``, ``summary``, ``stars``."""
+    return {k: result_path("profile", f"{k}.csv", targetname, create)
+            for k in ("profile", "summary", "stars")}
+
+
+def describe() -> str:
+    """Human-readable summary of the resolved roots, for notebook sanity checks."""
+    src = (
+        "$ZTFCOMET_DATA" if os.environ.get("ZTFCOMET_DATA")
+        else "SSD" if DATA_ROOT == SSD_DATA_ROOT
+        else "project fallback"
+    )
+    return "\n".join([
+        f"PROJECT_ROOT : {PROJECT_ROOT}",
+        f"DATA_ROOT    : {DATA_ROOT}   [{src}]{'' if DATA_ROOT.is_dir() else '  (MISSING)'}",
+        f"RESULT_ROOT  : {RESULT_ROOT}",
+        f"FIG_ROOT     : {FIG_ROOT}",
+        f"DOC_ROOT     : {DOC_ROOT}",
+        f"SPHEREX_ROOT : {SPHEREX_ROOT}{'' if SPHEREX_APPHOT_DIR.is_dir() else '   (no apphot photometry yet)'}",
+        f"GAIA_ROOT    : {GAIA_ROOT}"
+        f"{'' if GAIA_ROOT.is_dir() else '   (MISSING — contamination flagging disabled)'}",
+    ])
+
+
+def using_fallback_root() -> bool:
+    """True when DATA_ROOT is the in-project fallback rather than the SSD.
+
+    A long unattended run should refuse to start in that state: the SSD holds
+    both the existing data and the resume checkpoint, so silently using the
+    fallback means redoing everything into the wrong place.
+    """
+    return (not os.environ.get("ZTFCOMET_DATA")
+            and DATA_ROOT == PROJECT_ROOT / "data" / "ztf")

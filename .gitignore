@@ -1,0 +1,52 @@
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+*.so
+
+# Environments
+.venv/
+env/
+*.env
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+._*
+
+# Build & dist
+build/
+dist/
+*.egg-info/
+
+# Data and outputs -- large, regenerable, never committed.
+# Raw ZTF FITS and the SPHEREx cutouts live on the SSD (see the directory.py of
+# each package); data/ztf and data/spherex_sample are the local fallbacks.
+# The small reference tables and every README stay tracked.
+data/*
+results/*
+fig/*
+!data/README.md
+!data/reference/
+!data/ztf/
+!results/README.md
+!fig/README.md
+*.fits
+*.fits.part
+*.parq
+
+# The review deck is rebuilt by scripts/comspec/make_figure_slides.py; the papers
+# in doc/literature/ are copyrighted -- their .summary.md files are tracked instead
+doc/figures*.pptx
+doc/literature/**/*.pdf
+
+# Editor
+.vscode/
+.idea/
+
+# pytest
+.pytest_cache/
+
+# Office lock/temp files
+~$*

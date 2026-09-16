@@ -1,0 +1,66 @@
+species,band,line,nu_cm,T_K,g_published,unit_scale,source,note
+H2O,(101)-(001),(101)000-(001)111,3458.12,80,73.63,1e-9,Villanueva2011Icarus_T2,ortho
+H2O,(200)-(001),(200)110-(001)111,3450.29,80,110.23,1e-9,Villanueva2011Icarus_T2,ortho
+H2O,(200)-(001),(200)212-(001)313,3382.10,80,164.44,1e-9,Villanueva2011Icarus_T2,ortho
+H2O,(200)-(001),(200)221-(001)322,3372.75,80,90.11,1e-9,Villanueva2011Icarus_T2,ortho
+H2O,(200)-(001),(200)303-(001)404,3358.92,80,80.49,1e-9,Villanueva2011Icarus_T2,ortho
+H2O,(201)-(200),(201)000-(200)101,3388.77,80,29.79,1e-9,Villanueva2011Icarus_T2,ortho
+H2O,(200)-(100),(200)321-(100)432,3374.40,80,16.94,1e-9,Villanueva2011Icarus_T2,ortho
+H2O,(001)-(010),(001)111-(010)110,2151.20,79,451.12,1e-9,Villanueva2011Icarus_T2,ortho
+H2O,(100)-(010),(100)221-(010)110,2148.19,79,117.99,1e-9,Villanueva2011Icarus_T2,ortho
+H2O,(001)-(010),(001)220-(010)221,2144.81,79,200.34,1e-9,Villanueva2011Icarus_T2,ortho
+H2O,(001)-(010),(001)000-(010)101,2137.38,79,530.28,1e-9,Villanueva2011Icarus_T2,ortho
+H2O,(200)-(001),(200)220-(001)221,3445.89,80,34.65,1e-9,Villanueva2011Icarus_T2,para
+H2O,(101)-(001),(101)212-(001)303,3434.40,80,21.87,1e-9,Villanueva2011Icarus_T2,para
+H2O,(200)-(001),(200)202-(001)303,3378.48,80,46.57,1e-9,Villanueva2011Icarus_T2,para
+H2O,(200)-(001),(200)211-(001)312,3366.35,80,34.41,1e-9,Villanueva2011Icarus_T2,para
+H2O,(200)-(001),(200)313-(001)414,3360.99,80,27.10,1e-9,Villanueva2011Icarus_T2,para
+H2O,(001)-(010),(001)212-(010)211,2139.93,79,47.21,1e-9,Villanueva2011Icarus_T2,para
+CO,1-0,R3,2158.30,80,15.45,1e-6,Villanueva2011Icarus_T2,
+CO,1-0,R2,2154.60,80,16.72,1e-6,Villanueva2011Icarus_T2,
+CO,1-0,R1,2150.86,80,12.58,1e-6,Villanueva2011Icarus_T2,
+CO,1-0,P2,2135.55,80,14.91,1e-6,Villanueva2011Icarus_T2,
+CO,1-0,P3,2131.63,80,18.36,1e-6,Villanueva2011Icarus_T2,
+CH4,nu3,R2(E),3048.17,80,11.26,1e-6,Villanueva2011Icarus_T2,
+CH4,nu3,R2(F1),3048.15,80,16.95,1e-6,Villanueva2011Icarus_T2,
+CH4,nu3,R1,3038.50,80,17.21,1e-6,Villanueva2011Icarus_T2,
+CH4,nu3,R0,3028.75,80,20.57,1e-6,Villanueva2011Icarus_T2,
+CH4,nu3,P2(E),2999.06,80,4.46,1e-6,Villanueva2011Icarus_T2,
+CH4,nu3,P2(F1),2998.99,80,6.69,1e-6,Villanueva2011Icarus_T2,
+HCN,nu1,R4,3325.95,84,20.35,1e-6,Villanueva2011Icarus_T2,
+HCN,nu1,R2,3320.22,84,19.05,1e-6,Villanueva2011Icarus_T2,
+HCN,nu1,R1,3317.33,84,14.71,1e-6,Villanueva2011Icarus_T2,
+HCN,nu1,R0,3314.41,84,8.13,1e-6,Villanueva2011Icarus_T2,
+HCN,nu1,P2,3305.54,84,16.29,1e-6,Villanueva2011Icarus_T2,
+HCN,nu1,P3,3302.55,84,22.12,1e-6,Villanueva2011Icarus_T2,
+HCN,nu1,P4,3299.53,84,25.49,1e-6,Villanueva2011Icarus_T2,
+HCN,nu1,P5,3296.49,84,26.17,1e-6,Villanueva2011Icarus_T2,
+HCN,nu1,P6,3293.43,84,24.54,1e-6,Villanueva2011Icarus_T2,
+HCN,nu1,P7,3290.35,84,21.22,1e-6,Villanueva2011Icarus_T2,
+HCN,nu1,P8,3287.25,84,17.21,1e-6,Villanueva2011Icarus_T2,
+HCN,nu1,P9,3284.13,84,13.09,1e-6,Villanueva2011Icarus_T2,
+C2H2,nu3,R9e,3317.88,80,5.80,1e-6,Villanueva2011Icarus_T2,
+C2H2,nu3,R4e,3306.48,80,5.07,1e-6,Villanueva2011Icarus_T2,
+C2H2,nu3,R3e,3304.17,80,14.98,1e-6,Villanueva2011Icarus_T2,
+C2H2,nu3,R1e,3299.52,80,9.92,1e-6,Villanueva2011Icarus_T2,
+C2H2,nu3,P3e,3287.75,80,14.97,1e-6,Villanueva2011Icarus_T2,
+C2H2,nu3,P5e,3282.99,80,18.89,1e-6,Villanueva2011Icarus_T2,
+C2H2,nu2+nu4+nu5,R9e,3304.97,80,6.55,1e-6,Villanueva2011Icarus_T2,
+C2H2,nu2+nu4+nu5,R7e,3300.42,80,11.29,1e-6,Villanueva2011Icarus_T2,
+C2H2,nu2+nu4+nu5,R5e,3295.84,80,15.51,1e-6,Villanueva2011Icarus_T2,
+C2H2,nu2+nu4+nu5,R3e,3291.23,80,16.05,1e-6,Villanueva2011Icarus_T2,
+C2H2,nu2+nu4+nu5,R1e,3286.58,80,10.70,1e-6,Villanueva2011Icarus_T2,
+NH3,nu1,sqP(1;0),3317.21,80,1.02,1e-6,Villanueva2011Icarus_T2,ortho
+NH3,nu1,aqP(2;1),3295.43,80,0.56,1e-6,Villanueva2011Icarus_T2,para
+NH3,nu1,aqP(2;0),3295.38,80,1.52,1e-6,Villanueva2011Icarus_T2,ortho
+C2H6,nu7,RQ4,3000.21,79,15.85,1e-6,Villanueva2011Icarus_T2,Q-branch window incl. P/R
+C2H6,nu7,RQ2,2993.46,79,25.60,1e-6,Villanueva2011Icarus_T2,Q-branch window incl. P/R
+C2H6,nu7,RQ1,2990.08,79,30.71,1e-6,Villanueva2011Icarus_T2,Q-branch window incl. P/R
+C2H6,nu7,RQ0,2986.72,79,39.74,1e-6,Villanueva2011Icarus_T2,Q-branch window incl. P/R
+C2H6,nu7,PQ1,2983.38,79,30.67,1e-6,Villanueva2011Icarus_T2,Q-branch window incl. P/R
+C2H6,nu7,PQ2,2980.08,79,25.81,1e-6,Villanueva2011Icarus_T2,Q-branch window incl. P/R
+C2H6,nu7,PQ3,2976.79,79,21.96,1e-6,Villanueva2011Icarus_T2,Q-branch window incl. P/R
+CH3OH,nu3,Q-branch(2843.5-2845.0),2844.28,80,15.5,1e-6,Villanueva2011Icarus_T2,
+CH3OH,nu3,band,2844.2,75,143.4,1e-6,Villanueva2012ApJ_T3,band total at 75 K
+CH3OH,nu3,band,2844.2,150,128.4,1e-6,Villanueva2012ApJ_T3,band total at 150 K
+HC3N,nu1,band,3327.37,100,988,1e-6,Villanueva2013JQSRT,band total at 100 K
